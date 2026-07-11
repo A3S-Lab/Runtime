@@ -9,6 +9,7 @@ mod registry;
 mod selection;
 
 pub mod contract;
+pub mod docker;
 
 pub use client::A3sRuntimeClient;
 pub use driver::RuntimeDriver;

@@ -27,6 +27,14 @@ missing explicit provider fails without consulting the Docker factory. A
 factory owns all provider-specific configuration and dependencies and can only
 return the common `A3sRuntimeClient` interface.
 
+`FileOperationStore` provides the durable idempotency boundary shared by local
+providers. It publishes owner-only records atomically under a cross-process
+file lock, rejects symlink state roots, returns the original queued handle for
+an identical repeated reservation, and reports `OperationConflict` when an
+existing operation ID is reused with another canonical spec digest. Updates
+preserve execution/spec/role identity and allow only forward lifecycle
+transitions; terminal records cannot be replaced.
+
 This initial contract does not yet publish a production provider. Docker and
 `a3s-box` adapters will be added only when they implement the same lifecycle
 and evidence contract.

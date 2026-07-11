@@ -2,7 +2,7 @@ use crate::{RuntimeError, RuntimeResult};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProviderId(String);
 
 impl ProviderId {

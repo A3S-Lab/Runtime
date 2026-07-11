@@ -2,12 +2,14 @@
 
 mod client;
 mod error;
+mod registry;
 mod selection;
 
 pub mod contract;
 
 pub use client::A3sRuntimeClient;
 pub use error::{RuntimeError, RuntimeResult};
+pub use registry::{RuntimeClientRegistry, RuntimeProviderFactory};
 pub use selection::{
     OperatorRuntimeConfig, ProviderId, RuntimeSelection, SelectionSource, SessionRuntimePolicy,
 };

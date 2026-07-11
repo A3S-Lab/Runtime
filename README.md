@@ -21,6 +21,12 @@ local caller selects Docker. Provider IDs are normalized, portable identifiers,
 not executable paths or shell commands. Selecting an unavailable explicit
 provider must fail rather than fall back to Docker.
 
+`RuntimeClientRegistry` maps those IDs to typed `RuntimeProviderFactory`
+objects. Duplicate registrations are rejected without replacement, and a
+missing explicit provider fails without consulting the Docker factory. A
+factory owns all provider-specific configuration and dependencies and can only
+return the common `A3sRuntimeClient` interface.
+
 This initial contract does not yet publish a production provider. Docker and
 `a3s-box` adapters will be added only when they implement the same lifecycle
 and evidence contract.

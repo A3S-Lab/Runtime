@@ -1,5 +1,6 @@
 use super::{ArtifactRef, OutputArtifact, PrivacyClass, ProtectedMount};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +129,16 @@ impl RuntimeExecutionSpec {
             }
         }
         Ok(())
+    }
+
+    /// Digest of the closed semantic request. The schema contains no maps or
+    /// transport-only fields, so Serde's declared field order is canonical for
+    /// this protocol version.
+    pub fn digest(&self) -> Result<String, String> {
+        self.validate()?;
+        let bytes = serde_json::to_vec(self)
+            .map_err(|error| format!("could not encode Runtime execution spec: {error}"))?;
+        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
     }
 }
 
@@ -334,6 +345,10 @@ mod tests {
             resources: resources(),
         };
         candidate.validate().unwrap();
+        assert_eq!(candidate.digest().unwrap(), candidate.digest().unwrap());
+        let mut changed = candidate.clone();
+        changed.operation_id = "run/other-candidate".into();
+        assert_ne!(candidate.digest().unwrap(), changed.digest().unwrap());
         let mut judge = candidate.clone();
         judge.role = RuntimeRole::Judge;
         assert!(judge.validate().is_err());

@@ -15,6 +15,12 @@ The crate owns:
 Provider implementations live behind `A3sRuntimeClient`. Callers must never
 branch on provider names to weaken execution semantics.
 
+Provider selection is shared as well. An explicit operator provider takes
+precedence over authenticated session policy; when neither exists, a signed-out
+local caller selects Docker. Provider IDs are normalized, portable identifiers,
+not executable paths or shell commands. Selecting an unavailable explicit
+provider must fail rather than fall back to Docker.
+
 This initial contract does not yet publish a production provider. Docker and
 `a3s-box` adapters will be added only when they implement the same lifecycle
 and evidence contract.

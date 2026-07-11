@@ -45,20 +45,8 @@ return a terminal failed result for a definitive launch failure; transport
 errors remain ambiguous and are reconciled through `inspect` using the same
 execution identity.
 
-The local Docker provider now implements that driver contract. It accepts only
-digest-pinned images and typed argv, mounts, environment, and platform values;
-mutable tags, proxy variables, unsafe mount paths, duplicate targets, and NUL
-bytes are rejected. Containers use deterministic Runtime-owned names and
-identity labels so a process restart can verify and reattach to the same
-operation. Creation enforces network none, a read-only root filesystem,
-capability drop, no-new-privileges, PID/memory/CPU limits, and a bounded
-noexec/nosuid/nodev temporary filesystem. `DockerArtifactResolver` is the
-provider-local ArtifactStore boundary: it materializes locked inputs and turns
-container completion or cancellation into role-correct protected Runtime
-artifacts. A real ignored Docker test covers submit, container execution,
-terminal Candidate checkpoint/submission finalization, durable persistence,
-and terminal reattachment.
-
-This initial contract does not yet publish a production provider. Docker and
-`a3s-box` adapters will be added only when they implement the same lifecycle
-and evidence contract.
+This core crate does not embed a container implementation. Docker, `a3s-box`,
+and A3S OS adapters live at their provider integration points and register a
+typed factory that returns the same managed client. Provider-specific process,
+SDK, transport, image, and mount code therefore cannot leak into the shared
+protocol or force unrelated providers to depend on Docker.

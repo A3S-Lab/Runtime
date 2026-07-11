@@ -35,6 +35,16 @@ existing operation ID is reused with another canonical spec digest. Updates
 preserve execution/spec/role identity and allow only forward lifecycle
 transitions; terminal records cannot be replaced.
 
+`ManagedRuntimeClient` composes that store with a provider-specific
+`RuntimeDriver`. The shared layer owns reserve/reattach, monotonic updates,
+terminal short-circuiting, and identity validation; drivers only start, inspect,
+or cancel the provider operation associated with the supplied durable record.
+Repeated submit never starts a second provider operation, and inspecting or
+cancelling a terminal record never calls the provider again. A driver must
+return a terminal failed result for a definitive launch failure; transport
+errors remain ambiguous and are reconciled through `inspect` using the same
+execution identity.
+
 This initial contract does not yet publish a production provider. Docker and
 `a3s-box` adapters will be added only when they implement the same lifecycle
 and evidence contract.

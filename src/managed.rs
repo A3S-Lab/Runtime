@@ -1,250 +1,288 @@
-use crate::contract::{RuntimeCapabilities, RuntimeExecutionResult, RuntimeExecutionSpec};
-use crate::{A3sRuntimeClient, OperationStore, RuntimeDriver, RuntimeResult};
+use crate::contract::{
+    RuntimeActionRequest, RuntimeApplyRequest, RuntimeCapabilities, RuntimeExecRequest,
+    RuntimeExecResult, RuntimeInspection, RuntimeLogChunk, RuntimeLogQuery, RuntimeObservation,
+    RuntimeRemoval, RuntimeUnitState,
+};
+use crate::{
+    RuntimeActionKind, RuntimeClient, RuntimeClock, RuntimeDriver, RuntimeError, RuntimeResult,
+    RuntimeStateStore, SystemRuntimeClock,
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Shared durable lifecycle implementation used by concrete providers.
+/// Shared durable lifecycle implementation used by provider integrations.
 pub struct ManagedRuntimeClient {
-    operations: Arc<dyn OperationStore>,
+    state: Arc<dyn RuntimeStateStore>,
     driver: Arc<dyn RuntimeDriver>,
+    clock: Arc<dyn RuntimeClock>,
 }
 
 impl ManagedRuntimeClient {
-    pub fn new(operations: Arc<dyn OperationStore>, driver: Arc<dyn RuntimeDriver>) -> Self {
-        Self { operations, driver }
+    pub fn new(state: Arc<dyn RuntimeStateStore>, driver: Arc<dyn RuntimeDriver>) -> Self {
+        Self::with_clock(state, driver, Arc::new(SystemRuntimeClock))
+    }
+
+    pub fn with_clock(
+        state: Arc<dyn RuntimeStateStore>,
+        driver: Arc<dyn RuntimeDriver>,
+        clock: Arc<dyn RuntimeClock>,
+    ) -> Self {
+        Self {
+            state,
+            driver,
+            clock,
+        }
+    }
+
+    async fn checked_capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
+        let capabilities = self.driver.capabilities().await?;
+        capabilities.validate().map_err(RuntimeError::Protocol)?;
+        Ok(capabilities)
+    }
+
+    fn check_deadline(&self, deadline_at_ms: Option<u64>) -> RuntimeResult<()> {
+        if deadline_at_ms.is_some_and(|deadline| deadline <= self.clock.now_ms()) {
+            return Err(RuntimeError::DeadlineExceeded(
+                "request expired before provider dispatch".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
 #[async_trait]
-impl A3sRuntimeClient for ManagedRuntimeClient {
+impl RuntimeClient for ManagedRuntimeClient {
     async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
-        let capabilities = self.driver.capabilities().await?;
-        capabilities
-            .validate()
-            .map_err(crate::RuntimeError::Protocol)?;
-        Ok(capabilities)
+        self.checked_capabilities().await
     }
 
-    async fn submit(&self, spec: &RuntimeExecutionSpec) -> RuntimeResult<RuntimeExecutionResult> {
-        let reservation = self.operations.reserve(spec).await?;
-        if !reservation.created {
-            return Ok(reservation.record.result);
+    async fn apply(&self, request: &RuntimeApplyRequest) -> RuntimeResult<RuntimeObservation> {
+        request.validate().map_err(RuntimeError::InvalidRequest)?;
+        self.check_deadline(request.deadline_at_ms)?;
+        let capabilities = self.checked_capabilities().await?;
+        let missing = capabilities
+            .missing_for(&request.spec)
+            .map_err(RuntimeError::InvalidRequest)?;
+        if !missing.is_empty() {
+            return Err(RuntimeError::UnsupportedCapabilities(missing));
         }
-        let result = self.driver.start(spec, &reservation.record.result).await?;
-        Ok(self.operations.update(&result).await?.result)
+
+        let reservation = self
+            .state
+            .reserve_apply(request, self.clock.now_ms())
+            .await?;
+        if !reservation.dispatch {
+            return reservation.receipt.observation.ok_or_else(|| {
+                RuntimeError::Protocol("completed apply receipt has no observation".into())
+            });
+        }
+
+        let observation = self
+            .driver
+            .apply(&request.spec, &reservation.record.observation)
+            .await?;
+        observation
+            .validate_against(&request.spec)
+            .map_err(RuntimeError::Protocol)?;
+        if observation.state == RuntimeUnitState::Accepted {
+            return Err(RuntimeError::Protocol(
+                "provider apply did not advance the accepted observation".into(),
+            ));
+        }
+        Ok(self
+            .state
+            .update_observation(Some(&request.request_id), &observation)
+            .await?
+            .observation)
     }
 
-    async fn inspect(&self, operation_id: &str) -> RuntimeResult<RuntimeExecutionResult> {
-        let record = self.operations.load(operation_id).await?;
-        if record.result.state.is_terminal() {
-            return Ok(record.result);
+    async fn inspect(&self, unit_id: &str) -> RuntimeResult<RuntimeInspection> {
+        let record = match self.state.load(unit_id).await {
+            Ok(record) => record,
+            Err(RuntimeError::NotFound { .. }) => {
+                return Ok(RuntimeInspection::NotFound {
+                    unit_id: unit_id.into(),
+                    last_generation: None,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        if record.removed_at_ms.is_some() {
+            return Ok(RuntimeInspection::NotFound {
+                unit_id: unit_id.into(),
+                last_generation: Some(record.spec.generation),
+            });
         }
-        let result = self.driver.inspect(&record).await?;
-        Ok(self.operations.update(&result).await?.result)
+        if record.observation.state.is_terminal() {
+            return Ok(RuntimeInspection::Found {
+                observation: Box::new(record.observation),
+            });
+        }
+
+        match self.driver.inspect(&record).await? {
+            RuntimeInspection::Found { observation } => {
+                observation
+                    .validate_against(&record.spec)
+                    .map_err(RuntimeError::Protocol)?;
+                let record = self
+                    .state
+                    .update_observation(None, observation.as_ref())
+                    .await?;
+                Ok(RuntimeInspection::Found {
+                    observation: Box::new(record.observation),
+                })
+            }
+            RuntimeInspection::NotFound { .. } => {
+                let mut unknown = record.observation;
+                unknown.state = RuntimeUnitState::Unknown;
+                unknown.observed_at_ms = unknown.observed_at_ms.max(self.clock.now_ms());
+                unknown.finished_at_ms = None;
+                unknown.health = None;
+                unknown.outputs.clear();
+                unknown.failure = None;
+                let record = self.state.update_observation(None, &unknown).await?;
+                Ok(RuntimeInspection::Found {
+                    observation: Box::new(record.observation),
+                })
+            }
+        }
     }
 
-    async fn cancel(&self, operation_id: &str) -> RuntimeResult<RuntimeExecutionResult> {
-        let record = self.operations.load(operation_id).await?;
-        if record.result.state.is_terminal() {
-            return Ok(record.result);
+    async fn stop(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeInspection> {
+        request.validate().map_err(RuntimeError::InvalidRequest)?;
+        self.check_deadline(request.deadline_at_ms)?;
+        let capabilities = self.checked_capabilities().await?;
+        if !capabilities.supports_feature(crate::contract::RuntimeFeature::Stop) {
+            return Err(RuntimeError::UnsupportedCapabilities(vec![
+                "feature:Stop".into()
+            ]));
         }
-        let result = self.driver.cancel(&record).await?;
-        Ok(self.operations.update(&result).await?.result)
+        let reservation = self
+            .state
+            .reserve_action(RuntimeActionKind::Stop, request, self.clock.now_ms())
+            .await?;
+        if !reservation.dispatch {
+            return Ok(RuntimeInspection::Found {
+                observation: Box::new(reservation.receipt.observation.ok_or_else(|| {
+                    RuntimeError::Protocol("completed stop receipt has no observation".into())
+                })?),
+            });
+        }
+        let observation = self.driver.stop(&reservation.record, request).await?;
+        observation
+            .validate_against(&reservation.record.spec)
+            .map_err(RuntimeError::Protocol)?;
+        let record = self
+            .state
+            .update_observation(Some(&request.request_id), &observation)
+            .await?;
+        Ok(RuntimeInspection::Found {
+            observation: Box::new(record.observation),
+        })
+    }
+
+    async fn remove(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeRemoval> {
+        request.validate().map_err(RuntimeError::InvalidRequest)?;
+        self.check_deadline(request.deadline_at_ms)?;
+        let capabilities = self.checked_capabilities().await?;
+        if !capabilities.supports_feature(crate::contract::RuntimeFeature::Remove) {
+            return Err(RuntimeError::UnsupportedCapabilities(vec![
+                "feature:Remove".into(),
+            ]));
+        }
+        let reservation = self
+            .state
+            .reserve_action(RuntimeActionKind::Remove, request, self.clock.now_ms())
+            .await?;
+        if !reservation.dispatch {
+            return reservation.receipt.removal.ok_or_else(|| {
+                RuntimeError::Protocol("completed remove receipt has no removal".into())
+            });
+        }
+        let removal = self.driver.remove(&reservation.record, request).await?;
+        removal.validate().map_err(RuntimeError::Protocol)?;
+        if removal.request_id != request.request_id
+            || removal.unit_id != request.unit_id
+            || removal.generation != request.generation
+        {
+            return Err(RuntimeError::Protocol(
+                "provider removal changed immutable request identity".into(),
+            ));
+        }
+        self.state.complete_removal(&removal).await?;
+        Ok(removal)
+    }
+
+    async fn logs(&self, query: &RuntimeLogQuery) -> RuntimeResult<Vec<RuntimeLogChunk>> {
+        query.validate().map_err(RuntimeError::InvalidRequest)?;
+        let capabilities = self.checked_capabilities().await?;
+        if !capabilities.supports_feature(crate::contract::RuntimeFeature::Logs) {
+            return Err(RuntimeError::UnsupportedCapabilities(vec![
+                "feature:Logs".into()
+            ]));
+        }
+        let record = self.state.load(&query.unit_id).await?;
+        ensure_active_generation(&record, query.generation)?;
+        let chunks = self.driver.logs(&record, query).await?;
+        for chunk in &chunks {
+            chunk.validate().map_err(RuntimeError::Protocol)?;
+        }
+        if chunks
+            .windows(2)
+            .any(|pair| pair[0].sequence >= pair[1].sequence)
+        {
+            return Err(RuntimeError::Protocol(
+                "provider returned unordered log chunks".into(),
+            ));
+        }
+        Ok(chunks)
+    }
+
+    async fn exec(&self, request: &RuntimeExecRequest) -> RuntimeResult<RuntimeExecResult> {
+        request.validate().map_err(RuntimeError::InvalidRequest)?;
+        let capabilities = self.checked_capabilities().await?;
+        if !capabilities.supports_feature(crate::contract::RuntimeFeature::Exec) {
+            return Err(RuntimeError::UnsupportedCapabilities(vec![
+                "feature:Exec".into()
+            ]));
+        }
+        let record = self.state.load(&request.unit_id).await?;
+        ensure_active_generation(&record, request.generation)?;
+        let result = self.driver.exec(&record, request).await?;
+        result.validate().map_err(RuntimeError::Protocol)?;
+        if result.request_id != request.request_id
+            || result.observation.unit_id != request.unit_id
+            || result.observation.generation != request.generation
+        {
+            return Err(RuntimeError::Protocol(
+                "provider exec changed immutable request identity".into(),
+            ));
+        }
+        Ok(result)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::contract::{
-        ArtifactRef, ExecutionFailure, ExecutionState, NetworkPolicy, ResourceLimits,
-        RuntimeEvidence, RuntimeRole, RuntimeUsage, SubmissionPolicy,
-    };
-    use crate::{FileOperationStore, OperationRecord, RuntimeError};
-    use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct TestDriver {
-        starts: AtomicUsize,
-        inspections: AtomicUsize,
-        cancellations: AtomicUsize,
+fn ensure_active_generation(
+    record: &crate::RuntimeUnitRecord,
+    requested: u64,
+) -> RuntimeResult<()> {
+    if record.removed_at_ms.is_some() {
+        return Err(RuntimeError::NotFound {
+            unit_id: record.spec.unit_id.clone(),
+        });
     }
-
-    impl TestDriver {
-        fn new() -> Self {
-            Self {
-                starts: AtomicUsize::new(0),
-                inspections: AtomicUsize::new(0),
-                cancellations: AtomicUsize::new(0),
-            }
-        }
+    if requested < record.spec.generation {
+        return Err(RuntimeError::StaleGeneration {
+            unit_id: record.spec.unit_id.clone(),
+            requested,
+            current: record.spec.generation,
+        });
     }
-
-    #[async_trait]
-    impl RuntimeDriver for TestDriver {
-        async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
-            Ok(RuntimeCapabilities {
-                schema: RuntimeCapabilities::SCHEMA.into(),
-                semantics_profile_digest: digest('c'),
-                provider_build: "test".into(),
-                immutable_assets: true,
-                role_isolation: true,
-                protected_mounts: true,
-                protected_typed_results: true,
-                terminal_checkpoints: true,
-                submission_projection: true,
-                network_none: true,
-                hard_resource_limits: true,
-                durable_operations: true,
-                cancellation: true,
-                usage_evidence: true,
-            })
-        }
-
-        async fn start(
-            &self,
-            _spec: &RuntimeExecutionSpec,
-            queued: &RuntimeExecutionResult,
-        ) -> RuntimeResult<RuntimeExecutionResult> {
-            self.starts.fetch_add(1, Ordering::SeqCst);
-            let mut running = queued.clone();
-            running.state = ExecutionState::Running;
-            running.started_at_ms = Some(1);
-            Ok(running)
-        }
-
-        async fn inspect(
-            &self,
-            operation: &OperationRecord,
-        ) -> RuntimeResult<RuntimeExecutionResult> {
-            self.inspections.fetch_add(1, Ordering::SeqCst);
-            Ok(operation.result.clone())
-        }
-
-        async fn cancel(
-            &self,
-            operation: &OperationRecord,
-        ) -> RuntimeResult<RuntimeExecutionResult> {
-            self.cancellations.fetch_add(1, Ordering::SeqCst);
-            let mut cancelled = operation.result.clone();
-            cancelled.state = ExecutionState::Cancelled;
-            cancelled.finished_at_ms = Some(2);
-            cancelled.failure = Some(ExecutionFailure {
-                code: "cancelled".into(),
-                message: "cancelled by caller".into(),
-                retryable: false,
-            });
-            cancelled.usage = Some(RuntimeUsage {
-                wall_time_ms: 1,
-                cpu_time_ms: 0,
-                peak_memory_bytes: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-            });
-            cancelled.evidence = Some(RuntimeEvidence {
-                semantics_profile_digest: digest('c'),
-                provider_build: "test".into(),
-                spec_digest: operation.result.spec_digest.clone(),
-                claims: BTreeMap::new(),
-            });
-            Ok(cancelled)
-        }
+    if requested != record.spec.generation {
+        return Err(RuntimeError::GenerationConflict {
+            unit_id: record.spec.unit_id.clone(),
+            generation: requested,
+        });
     }
-
-    fn digest(character: char) -> String {
-        format!("sha256:{}", character.to_string().repeat(64))
-    }
-
-    fn spec(operation_id: &str) -> RuntimeExecutionSpec {
-        let artifact = ArtifactRef {
-            digest: digest('a'),
-            media_type: "application/vnd.a3s.asset.v1".into(),
-        };
-        RuntimeExecutionSpec {
-            schema: RuntimeExecutionSpec::SCHEMA.into(),
-            operation_id: operation_id.into(),
-            role: RuntimeRole::Candidate,
-            asset: artifact.clone(),
-            work_image: artifact,
-            protected_mounts: vec![],
-            protected_result_schema: None,
-            submission_policy: Some(SubmissionPolicy {
-                include: vec!["**".into()],
-                exclude: vec![],
-                max_files: 1,
-                max_total_bytes: 1,
-                max_file_bytes: 1,
-            }),
-            network: NetworkPolicy::None,
-            resources: ResourceLimits {
-                wall_time_ms: 1,
-                cpu_millis: 1,
-                memory_bytes: 1,
-                scratch_bytes: 1,
-                output_bytes: 1,
-            },
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn repeated_submit_starts_once_and_cancel_is_durable() {
-        let directory = tempfile::tempdir().unwrap();
-        let driver = Arc::new(TestDriver::new());
-        let client = ManagedRuntimeClient::new(
-            Arc::new(FileOperationStore::new(directory.path())),
-            driver.clone(),
-        );
-        let first = client.submit(&spec("run/managed")).await.unwrap();
-        assert_eq!(first.state, ExecutionState::Running);
-        let repeated = client.submit(&spec("run/managed")).await.unwrap();
-        assert_eq!(repeated, first);
-        assert_eq!(driver.starts.load(Ordering::SeqCst), 1);
-        let cancelled = client.cancel("run/managed").await.unwrap();
-        assert_eq!(cancelled.state, ExecutionState::Cancelled);
-        assert_eq!(driver.cancellations.load(Ordering::SeqCst), 1);
-        assert_eq!(client.inspect("run/managed").await.unwrap(), cancelled);
-        assert_eq!(driver.inspections.load(Ordering::SeqCst), 0);
-        assert_eq!(client.cancel("run/managed").await.unwrap(), cancelled);
-        assert_eq!(driver.cancellations.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn driver_identity_substitution_is_rejected_by_store() {
-        struct BadDriver;
-        #[async_trait]
-        impl RuntimeDriver for BadDriver {
-            async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
-                Err(RuntimeError::Protocol("unused".into()))
-            }
-            async fn start(
-                &self,
-                _spec: &RuntimeExecutionSpec,
-                queued: &RuntimeExecutionResult,
-            ) -> RuntimeResult<RuntimeExecutionResult> {
-                let mut result = queued.clone();
-                result.state = ExecutionState::Running;
-                result.started_at_ms = Some(1);
-                result.execution_id = "substituted".into();
-                Ok(result)
-            }
-            async fn inspect(
-                &self,
-                operation: &OperationRecord,
-            ) -> RuntimeResult<RuntimeExecutionResult> {
-                Ok(operation.result.clone())
-            }
-            async fn cancel(
-                &self,
-                operation: &OperationRecord,
-            ) -> RuntimeResult<RuntimeExecutionResult> {
-                Ok(operation.result.clone())
-            }
-        }
-        let directory = tempfile::tempdir().unwrap();
-        let client = ManagedRuntimeClient::new(
-            Arc::new(FileOperationStore::new(directory.path())),
-            Arc::new(BadDriver),
-        );
-        assert!(client.submit(&spec("run/bad-driver")).await.is_err());
-    }
+    Ok(())
 }

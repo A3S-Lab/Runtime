@@ -1,23 +1,49 @@
-use crate::contract::{RuntimeCapabilities, RuntimeExecutionResult, RuntimeExecutionSpec};
-use crate::{OperationRecord, RuntimeResult};
+use crate::contract::{
+    RuntimeActionRequest, RuntimeCapabilities, RuntimeExecRequest, RuntimeExecResult,
+    RuntimeInspection, RuntimeLogChunk, RuntimeLogQuery, RuntimeObservation, RuntimeRemoval,
+    RuntimeUnitSpec,
+};
+use crate::{RuntimeResult, RuntimeUnitRecord};
 use async_trait::async_trait;
 
-/// Provider-specific execution primitive used by `ManagedRuntimeClient`.
+/// Provider-specific primitive used by `ManagedRuntimeClient`.
 ///
-/// Drivers do not own idempotency or persistence. They receive the durable
-/// record identity chosen by the shared client and return the next complete
-/// protocol result for that same identity.
+/// Drivers do not own request idempotency or durable shared state. `apply`,
+/// `stop`, and `remove` must nevertheless be safe to reattach after an
+/// ambiguous transport failure using the stable unit identity and generation.
 #[async_trait]
 pub trait RuntimeDriver: Send + Sync {
     async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities>;
 
-    async fn start(
+    async fn apply(
         &self,
-        spec: &RuntimeExecutionSpec,
-        queued: &RuntimeExecutionResult,
-    ) -> RuntimeResult<RuntimeExecutionResult>;
+        spec: &RuntimeUnitSpec,
+        current: &RuntimeObservation,
+    ) -> RuntimeResult<RuntimeObservation>;
 
-    async fn inspect(&self, operation: &OperationRecord) -> RuntimeResult<RuntimeExecutionResult>;
+    async fn inspect(&self, unit: &RuntimeUnitRecord) -> RuntimeResult<RuntimeInspection>;
 
-    async fn cancel(&self, operation: &OperationRecord) -> RuntimeResult<RuntimeExecutionResult>;
+    async fn stop(
+        &self,
+        unit: &RuntimeUnitRecord,
+        request: &RuntimeActionRequest,
+    ) -> RuntimeResult<RuntimeObservation>;
+
+    async fn remove(
+        &self,
+        unit: &RuntimeUnitRecord,
+        request: &RuntimeActionRequest,
+    ) -> RuntimeResult<RuntimeRemoval>;
+
+    async fn logs(
+        &self,
+        unit: &RuntimeUnitRecord,
+        query: &RuntimeLogQuery,
+    ) -> RuntimeResult<Vec<RuntimeLogChunk>>;
+
+    async fn exec(
+        &self,
+        unit: &RuntimeUnitRecord,
+        request: &RuntimeExecRequest,
+    ) -> RuntimeResult<RuntimeExecResult>;
 }

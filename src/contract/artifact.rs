@@ -1,54 +1,36 @@
 use serde::{Deserialize, Serialize};
 
+/// Immutable artifact address understood by a Runtime provider.
+///
+/// `uri` tells the provider where to resolve the content while `digest` is the
+/// authoritative identity. Providers must never replace the digest with a
+/// mutable tag resolved at execution time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactRef {
+    pub uri: String,
     pub digest: String,
     pub media_type: String,
 }
 
 impl ArtifactRef {
     pub fn validate(&self) -> Result<(), String> {
-        validate_digest(&self.digest)?;
-        if self.media_type.trim().is_empty() {
-            return Err("artifact media_type must not be empty".into());
-        }
-        Ok(())
+        super::validate_uri("artifact uri", &self.uri)?;
+        super::validate_digest(&self.digest)?;
+        super::validate_nonempty("artifact media_type", &self.media_type, 255)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrivacyClass {
-    Public,
-    CandidatePrivate,
-    JudgePrivate,
-    TrialSubmission,
-    ProtectedResult,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProtectedMount {
+pub struct RuntimeOutputArtifact {
     pub name: String,
     pub artifact: ArtifactRef,
-    pub privacy: PrivacyClass,
-    pub read_only: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OutputArtifact {
-    pub artifact: ArtifactRef,
-    pub privacy: PrivacyClass,
-}
-
-pub(crate) fn validate_digest(value: &str) -> Result<(), String> {
-    let Some(hex) = value.strip_prefix("sha256:") else {
-        return Err("digest must use sha256".into());
-    };
-    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("digest must contain exactly 64 hexadecimal characters".into());
+impl RuntimeOutputArtifact {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        super::validate_name("output artifact name", &self.name)?;
+        self.artifact.validate()
     }
-    Ok(())
 }

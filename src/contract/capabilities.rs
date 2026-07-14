@@ -1,26 +1,52 @@
+use super::{
+    HealthCheckKind, IsolationLevel, MountKind, NetworkMode, RuntimeUnitClass, RuntimeUnitSpec,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceControl {
+    Cpu,
+    Memory,
+    Pids,
+    EphemeralStorage,
+    ExecutionTimeout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeFeature {
+    DurableIdentity,
+    Stop,
+    Remove,
+    Logs,
+    Exec,
+    Usage,
+    Attestation,
+    SecretReferences,
+}
+
+/// Structured, provider-reported capabilities. Product-specific support
+/// predicates belong to the caller, not this protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeCapabilities {
     pub schema: String,
-    pub semantics_profile_digest: String,
+    pub provider_id: String,
     pub provider_build: String,
-    pub immutable_assets: bool,
-    pub role_isolation: bool,
-    pub protected_mounts: bool,
-    pub protected_typed_results: bool,
-    pub terminal_checkpoints: bool,
-    pub submission_projection: bool,
-    pub network_none: bool,
-    pub hard_resource_limits: bool,
-    pub durable_operations: bool,
-    pub cancellation: bool,
-    pub usage_evidence: bool,
+    pub unit_classes: Vec<RuntimeUnitClass>,
+    pub artifact_media_types: Vec<String>,
+    pub isolation_levels: Vec<IsolationLevel>,
+    pub network_modes: Vec<NetworkMode>,
+    pub mount_kinds: Vec<MountKind>,
+    pub health_check_kinds: Vec<HealthCheckKind>,
+    pub resource_controls: Vec<ResourceControl>,
+    pub features: Vec<RuntimeFeature>,
 }
 
 impl RuntimeCapabilities {
-    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v1";
+    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v2";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -29,24 +55,101 @@ impl RuntimeCapabilities {
                 self.schema
             ));
         }
-        super::artifact::validate_digest(&self.semantics_profile_digest)?;
-        if self.provider_build.trim().is_empty() {
-            return Err("provider_build must not be empty".into());
+        super::validate_id("provider_id", &self.provider_id, 64)?;
+        super::validate_nonempty("provider_build", &self.provider_build, 255)?;
+        if self.unit_classes.is_empty()
+            || self.artifact_media_types.is_empty()
+            || self.isolation_levels.is_empty()
+            || self.resource_controls.is_empty()
+        {
+            return Err("Runtime capabilities omit a required capability family".into());
+        }
+        ensure_unique("unit class", &self.unit_classes)?;
+        ensure_unique("artifact media type", &self.artifact_media_types)?;
+        ensure_unique("isolation level", &self.isolation_levels)?;
+        ensure_unique("network mode", &self.network_modes)?;
+        ensure_unique("mount kind", &self.mount_kinds)?;
+        ensure_unique("health check kind", &self.health_check_kinds)?;
+        ensure_unique("resource control", &self.resource_controls)?;
+        ensure_unique("feature", &self.features)?;
+        for media_type in &self.artifact_media_types {
+            super::validate_nonempty("artifact media type", media_type, 255)?;
         }
         Ok(())
     }
 
-    pub fn supports_bench_p1(&self) -> bool {
-        self.immutable_assets
-            && self.role_isolation
-            && self.protected_mounts
-            && self.protected_typed_results
-            && self.terminal_checkpoints
-            && self.submission_projection
-            && self.network_none
-            && self.hard_resource_limits
-            && self.durable_operations
-            && self.cancellation
-            && self.usage_evidence
+    pub fn supports_feature(&self, feature: RuntimeFeature) -> bool {
+        self.features.contains(&feature)
     }
+
+    pub fn missing_for(&self, spec: &RuntimeUnitSpec) -> Result<Vec<String>, String> {
+        self.validate()?;
+        spec.validate()?;
+        let mut missing = Vec::new();
+        if !self.unit_classes.contains(&spec.class) {
+            missing.push(format!("unit_class:{:?}", spec.class));
+        }
+        if !self
+            .artifact_media_types
+            .contains(&spec.artifact.media_type)
+        {
+            missing.push(format!("artifact_media_type:{}", spec.artifact.media_type));
+        }
+        if !self.isolation_levels.contains(&spec.isolation) {
+            missing.push(format!("isolation:{:?}", spec.isolation));
+        }
+        if !self.network_modes.contains(&spec.network.mode) {
+            missing.push(format!("network_mode:{:?}", spec.network.mode));
+        }
+        for kind in spec.mounts.iter().map(|mount| mount.source.kind()) {
+            if !self.mount_kinds.contains(&kind) {
+                missing.push(format!("mount_kind:{kind:?}"));
+            }
+        }
+        if let Some(health) = &spec.health {
+            let kind = health.probe.kind();
+            if !self.health_check_kinds.contains(&kind) {
+                missing.push(format!("health_check:{kind:?}"));
+            }
+        }
+        for required in [
+            ResourceControl::Cpu,
+            ResourceControl::Memory,
+            ResourceControl::Pids,
+            ResourceControl::EphemeralStorage,
+        ] {
+            if !self.resource_controls.contains(&required) {
+                missing.push(format!("resource_control:{required:?}"));
+            }
+        }
+        if spec.resources.execution_timeout_ms.is_some()
+            && !self
+                .resource_controls
+                .contains(&ResourceControl::ExecutionTimeout)
+        {
+            missing.push("resource_control:ExecutionTimeout".into());
+        }
+        if !self.supports_feature(RuntimeFeature::DurableIdentity) {
+            missing.push("feature:DurableIdentity".into());
+        }
+        if !spec.secrets.is_empty() && !self.supports_feature(RuntimeFeature::SecretReferences) {
+            missing.push("feature:SecretReferences".into());
+        }
+        missing.sort();
+        missing.dedup();
+        Ok(missing)
+    }
+}
+
+fn ensure_unique<T>(label: &str, values: &[T]) -> Result<(), String>
+where
+    T: Ord + Clone,
+{
+    let unique = values.iter().cloned().collect::<BTreeSet<_>>();
+    if unique.len() != values.len() {
+        return Err(format!(
+            "Runtime capabilities contain duplicate {label} values"
+        ));
+    }
+    Ok(())
 }

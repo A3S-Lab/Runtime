@@ -1,21 +1,26 @@
-//! Provider-neutral execution contract and client for A3S runtimes.
+//! General provider-neutral Task and Service Runtime contracts for A3S.
 
 mod client;
+mod clock;
+mod conformance;
 mod driver;
 mod error;
 mod managed;
-mod operation;
+mod provider;
 mod registry;
-mod selection;
+mod state;
 
 pub mod contract;
 
-pub use client::A3sRuntimeClient;
+pub use client::RuntimeClient;
+pub use clock::{RuntimeClock, SystemRuntimeClock};
+pub use conformance::{verify_runtime_provider, RuntimeConformanceCase, RuntimeConformanceReport};
 pub use driver::RuntimeDriver;
 pub use error::{RuntimeError, RuntimeResult};
 pub use managed::ManagedRuntimeClient;
-pub use operation::{FileOperationStore, OperationRecord, OperationReservation, OperationStore};
+pub use provider::ProviderId;
 pub use registry::{RuntimeClientRegistry, RuntimeProviderFactory};
-pub use selection::{
-    OperatorRuntimeConfig, ProviderId, RuntimeSelection, SelectionSource, SessionRuntimePolicy,
+pub use state::{
+    FileRuntimeStateStore, RuntimeActionKind, RuntimeRequestKind, RuntimeRequestReceipt,
+    RuntimeRequestState, RuntimeStateReservation, RuntimeStateStore, RuntimeUnitRecord,
 };

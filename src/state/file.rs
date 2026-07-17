@@ -850,6 +850,8 @@ fn owner_only_open(path: &Path, label: &str) -> RuntimeResult<File> {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))
             .map_err(io_error("secure state lock"))?;
     }
+    let metadata = file.metadata().map_err(io_error("inspect state lock"))?;
+    verify_owner_only_file(&metadata, path, label)?;
     Ok(file)
 }
 

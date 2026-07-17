@@ -363,3 +363,114 @@ fn state_crash_001_receipt_first_process_kills_reconcile_every_result_kind() {
         },
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn state_fs_001_hard_linked_lock_record_and_receipt_files_fail_closed() {
+    let directory = tempfile::tempdir().expect("hard-link state root");
+    let store = FileRuntimeStateStore::new(directory.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve hard-link fixture");
+    let key = storage_key(UNIT_ID);
+
+    let state_lock = directory.path().join("locks").join(format!("{key}.lock"));
+    let state_lock_alias = directory.path().join("state-lock.alias");
+    std::fs::hard_link(&state_lock, &state_lock_alias).expect("hard-link state lock");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+    std::fs::remove_file(state_lock_alias).expect("remove state-lock alias");
+
+    let record = store.record_path(UNIT_ID, false).expect("record path");
+    let record_alias = directory.path().join("record.alias");
+    std::fs::hard_link(&record, &record_alias).expect("hard-link record");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+    std::fs::remove_file(record_alias).expect("remove record alias");
+
+    let receipt = store
+        .request_path(UNIT_ID, APPLY_ID, false)
+        .expect("receipt path");
+    let receipt_alias = directory.path().join("receipt.alias");
+    std::fs::hard_link(&receipt, &receipt_alias).expect("hard-link receipt");
+    assert!(matches!(
+        store.load_request_sync(UNIT_ID, APPLY_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+    std::fs::remove_file(receipt_alias).expect("remove receipt alias");
+
+    drop(
+        store
+            .acquire_operation_lease_sync(UNIT_ID)
+            .expect("create operation lock"),
+    );
+    let operation_lock = directory
+        .path()
+        .join("operations")
+        .join(format!("{key}.lock"));
+    let operation_alias = directory.path().join("operation-lock.alias");
+    std::fs::hard_link(&operation_lock, &operation_alias).expect("hard-link operation lock");
+    assert!(matches!(
+        store.acquire_operation_lease_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn state_fs_002_corrupt_permission_and_non_regular_boundaries_fail_closed() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+
+    let truncated = tempfile::tempdir().expect("truncated state root");
+    let store = FileRuntimeStateStore::new(truncated.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve truncated fixture");
+    let record = store.record_path(UNIT_ID, false).expect("record path");
+    std::fs::write(&record, b"{").expect("truncate record");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let invalid_utf8 = tempfile::tempdir().expect("invalid UTF-8 state root");
+    let store = FileRuntimeStateStore::new(invalid_utf8.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve invalid UTF-8 fixture");
+    let receipt = store
+        .request_path(UNIT_ID, APPLY_ID, false)
+        .expect("receipt path");
+    std::fs::write(&receipt, [0xff]).expect("corrupt receipt encoding");
+    assert!(matches!(
+        store.load_request_sync(UNIT_ID, APPLY_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let permissions = tempfile::tempdir().expect("permission state root");
+    let store = FileRuntimeStateStore::new(permissions.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve permission fixture");
+    let record = store.record_path(UNIT_ID, false).expect("record path");
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o644))
+        .expect("relax record permissions");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let non_regular = tempfile::tempdir().expect("non-regular state root");
+    let store = FileRuntimeStateStore::new(non_regular.path());
+    let record = store.record_path(UNIT_ID, true).expect("record path");
+    let _socket = UnixListener::bind(&record).expect("bind record socket");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+}

@@ -11,6 +11,7 @@ use a3s_runtime::{
     RuntimeStateStore,
 };
 use driver::{ProcessRaceDriver, ProviderResource, IMAGE_MEDIA_TYPE};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -274,6 +275,25 @@ fn assert_single_generation(resources: &[ProviderResource], generation: u64) {
     assert_eq!(resources[0].generation, generation);
 }
 
+fn inject_duplicate(provider_root: &Path, unit_id: &str, generation: u64) {
+    let driver = ProcessRaceDriver::new(provider_root);
+    let source = driver
+        .inventory(unit_id)
+        .expect("load duplicate source")
+        .into_iter()
+        .find(|resource| resource.generation == generation)
+        .expect("duplicate source is absent");
+    let mut duplicate = source;
+    duplicate.resource_id = format!("{}/duplicate", duplicate.resource_id);
+    let key = format!("{:x}", Sha256::digest(duplicate.resource_id.as_bytes()));
+    let path = provider_root.join("resources").join(format!("{key}.json"));
+    std::fs::write(
+        path,
+        serde_json::to_vec(&duplicate).expect("encode duplicate provider resource"),
+    )
+    .expect("inject duplicate provider resource");
+}
+
 #[test]
 fn race_gen_001_concurrent_generations_converge_to_one_newest_resource() {
     let state = tempfile::tempdir().expect("generation-race state root");
@@ -482,9 +502,7 @@ fn race_inventory_001_duplicate_resources_fail_closed_before_provider_mutation()
         .block_on(client.apply(&apply_request("duplicate-one", unit_id, 1)))
         .expect("prepare duplicate provider fixture");
     let process_driver = ProcessRaceDriver::new(provider.path());
-    process_driver
-        .inject_duplicate(unit_id, 1)
-        .expect("inject duplicate provider resource");
+    inject_duplicate(provider.path(), unit_id, 1);
     assert_eq!(
         process_driver
             .inventory(unit_id)

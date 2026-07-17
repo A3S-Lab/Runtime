@@ -50,19 +50,6 @@ impl ProcessRaceDriver {
         self.with_lock(|root| inventory_unlocked(root, unit_id))
     }
 
-    pub fn inject_duplicate(&self, unit_id: &str, generation: u64) -> RuntimeResult<()> {
-        self.with_lock(|root| {
-            let resources = inventory_unlocked(root, unit_id)?;
-            let source = resources
-                .iter()
-                .find(|resource| resource.generation == generation)
-                .ok_or_else(|| RuntimeError::Protocol("duplicate source is absent".into()))?;
-            let mut duplicate = source.clone();
-            duplicate.resource_id = format!("{}/duplicate", source.resource_id);
-            write_resource(root, &duplicate)
-        })
-    }
-
     fn with_lock<T>(&self, operation: impl FnOnce(&Path) -> RuntimeResult<T>) -> RuntimeResult<T> {
         ensure_provider_root(&self.root)?;
         let lock_path = self.root.join("provider.lock");

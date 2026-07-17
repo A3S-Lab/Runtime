@@ -14,6 +14,9 @@ pub use record::{
     RuntimeStateReservation, RuntimeUnitRecord,
 };
 
+#[cfg(test)]
+mod transition_tests;
+
 /// Owned guard for one unit's cross-process operation lease. Implementations
 /// release the lease when the guard is dropped.
 pub trait RuntimeOperationLease: Send {}

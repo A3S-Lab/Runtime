@@ -112,6 +112,11 @@ core durably records `unknown`. A later same-generation apply may adopt one new
 provider resource ID. Once that observation is completed, exact replay returns
 the replacement without another provider create.
 
+`unknown` is a confirmed-loss state, not a second `accepted` state. Recovery
+may move from `unknown` to a valid provider-backed intermediate or operation
+result and may adopt a replacement provider identity, but it cannot regress to
+`accepted`.
+
 ### 6. Operation postconditions are explicit
 
 Apply returns a provider-backed observation that has advanced beyond

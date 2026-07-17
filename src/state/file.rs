@@ -734,7 +734,6 @@ pub(crate) fn validate_transition(
         return Ok(());
     }
     let allowed = current.state == next.state
-        || current.state == RuntimeUnitState::Unknown
         || matches!(
             (current.state, next.state),
             (RuntimeUnitState::Accepted, RuntimeUnitState::Preparing)
@@ -765,6 +764,13 @@ pub(crate) fn validate_transition(
                 | (RuntimeUnitState::Stopping, RuntimeUnitState::Stopped)
                 | (RuntimeUnitState::Stopping, RuntimeUnitState::Failed)
                 | (RuntimeUnitState::Stopping, RuntimeUnitState::Unknown)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Preparing)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Starting)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Running)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Stopping)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Stopped)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Succeeded)
+                | (RuntimeUnitState::Unknown, RuntimeUnitState::Failed)
         );
     if !allowed {
         return Err(RuntimeError::Protocol(format!(

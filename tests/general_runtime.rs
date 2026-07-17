@@ -926,8 +926,7 @@ async fn completed_mutations_replay_after_deadline_provider_loss_and_removal() {
     let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
     let driver = Arc::new(TestDriver::new());
     let clock = Arc::new(ManualClock::new(NOW));
-    let client =
-        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
+    let client = ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
     let deadline = NOW + 1_000;
 
     let mut apply_request = apply("durable-replay-apply", service("durable-replay", 1));
@@ -980,8 +979,7 @@ async fn expired_pending_request_remains_pending_and_is_not_redispatched() {
     let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
     let driver = Arc::new(TestDriver::new());
     let clock = Arc::new(ManualClock::new(NOW));
-    let client =
-        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
+    let client = ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
     let mut request = apply("pending-expiry", service("pending-expiry", 1));
     request.deadline_at_ms = Some(NOW + 10);
     driver.hang_apply.store(true, Ordering::SeqCst);

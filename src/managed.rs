@@ -4,9 +4,9 @@ use crate::contract::{
     RuntimeRemoval, RuntimeUnitState,
 };
 use crate::{
-    RuntimeActionKind, RuntimeClient, RuntimeClock, RuntimeDriver, RuntimeError, RuntimeResult,
-    RuntimeRequestKind, RuntimeRequestReceipt, RuntimeRequestState, RuntimeStateStore,
-    SystemRuntimeClock,
+    RuntimeActionKind, RuntimeClient, RuntimeClock, RuntimeDriver, RuntimeError,
+    RuntimeRequestKind, RuntimeRequestReceipt, RuntimeRequestState, RuntimeResult,
+    RuntimeStateStore, SystemRuntimeClock,
 };
 use async_trait::async_trait;
 use std::future::Future;
@@ -482,7 +482,10 @@ impl RuntimeClient for ManagedRuntimeClient {
             .is_some()
         {
             let _lease = self.state.acquire_operation_lease(&request.unit_id).await?;
-            let reservation = self.state.reserve_exec(request, self.clock.now_ms()).await?;
+            let reservation = self
+                .state
+                .reserve_exec(request, self.clock.now_ms())
+                .await?;
             if reservation.dispatch {
                 return Err(RuntimeError::Protocol(
                     "completed exec receipt regressed to pending".into(),

@@ -445,9 +445,7 @@ impl FileRuntimeStateStore {
             )));
         }
         let unit = units.join(key);
-        if create {
-            ensure_directory(&unit)?;
-        } else if path_exists(&unit)? {
+        if create || path_exists(&unit)? {
             ensure_directory(&unit)?;
         }
         Ok(unit)
@@ -465,9 +463,7 @@ impl FileRuntimeStateStore {
     ) -> RuntimeResult<PathBuf> {
         validate_request_id(request_id)?;
         let requests = self.unit_directory(unit_id, create)?.join("requests");
-        if create {
-            ensure_directory(&requests)?;
-        } else if path_exists(&requests)? {
+        if create || path_exists(&requests)? {
             ensure_directory(&requests)?;
         }
         Ok(requests.join(format!("{}.json", storage_key(request_id))))

@@ -9,13 +9,16 @@ use a3s_runtime::contract::{
 };
 use a3s_runtime::{
     verify_runtime_provider, FileRuntimeStateStore, ManagedRuntimeClient, ProviderId,
-    RuntimeClient, RuntimeClientRegistry, RuntimeClock, RuntimeConformanceCase, RuntimeDriver,
-    RuntimeError, RuntimeProviderFactory, RuntimeResult, RuntimeStateStore, RuntimeUnitRecord,
+    RuntimeActionKind, RuntimeClient, RuntimeClientRegistry, RuntimeClock, RuntimeConformanceCase,
+    RuntimeDriver, RuntimeError, RuntimeOperationLease, RuntimeProviderFactory, RuntimeResult,
+    RuntimeStateReservation, RuntimeStateStore, RuntimeUnitRecord,
 };
 use async_trait::async_trait;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Notify;
 
 const NOW: u64 = 1_000;
 const IMAGE_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
@@ -26,6 +29,25 @@ struct FixedClock;
 impl RuntimeClock for FixedClock {
     fn now_ms(&self) -> u64 {
         NOW
+    }
+}
+
+#[derive(Debug)]
+struct ManualClock(AtomicU64);
+
+impl ManualClock {
+    fn new(now_ms: u64) -> Self {
+        Self(AtomicU64::new(now_ms))
+    }
+
+    fn set(&self, now_ms: u64) {
+        self.0.store(now_ms, Ordering::SeqCst);
+    }
+}
+
+impl RuntimeClock for ManualClock {
+    fn now_ms(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
     }
 }
 
@@ -45,6 +67,9 @@ struct TestDriver {
     return_unknown_on_apply: AtomicBool,
     return_running_on_stop: AtomicBool,
     substitute_exec_spec: AtomicBool,
+    hang_capabilities: AtomicBool,
+    hang_apply: AtomicBool,
+    hang_exec: AtomicBool,
 }
 
 impl TestDriver {
@@ -66,6 +91,9 @@ impl TestDriver {
             return_unknown_on_apply: AtomicBool::new(false),
             return_running_on_stop: AtomicBool::new(false),
             substitute_exec_spec: AtomicBool::new(false),
+            hang_capabilities: AtomicBool::new(false),
+            hang_apply: AtomicBool::new(false),
+            hang_exec: AtomicBool::new(false),
         }
     }
 
@@ -79,6 +107,55 @@ impl TestDriver {
     }
 }
 
+struct SignalingStateStore {
+    inner: Arc<FileRuntimeStateStore>,
+    lease_started: Arc<Notify>,
+}
+
+#[async_trait]
+impl RuntimeStateStore for SignalingStateStore {
+    async fn acquire_operation_lease(
+        &self,
+        unit_id: &str,
+    ) -> RuntimeResult<Box<dyn RuntimeOperationLease>> {
+        self.lease_started.notify_one();
+        self.inner.acquire_operation_lease(unit_id).await
+    }
+
+    async fn reserve_apply(
+        &self,
+        request: &RuntimeApplyRequest,
+        now_ms: u64,
+    ) -> RuntimeResult<RuntimeStateReservation> {
+        self.inner.reserve_apply(request, now_ms).await
+    }
+
+    async fn reserve_action(
+        &self,
+        kind: RuntimeActionKind,
+        request: &RuntimeActionRequest,
+        now_ms: u64,
+    ) -> RuntimeResult<RuntimeStateReservation> {
+        self.inner.reserve_action(kind, request, now_ms).await
+    }
+
+    async fn load(&self, unit_id: &str) -> RuntimeResult<RuntimeUnitRecord> {
+        self.inner.load(unit_id).await
+    }
+
+    async fn update_observation(
+        &self,
+        request_id: Option<&str>,
+        observation: &RuntimeObservation,
+    ) -> RuntimeResult<RuntimeUnitRecord> {
+        self.inner.update_observation(request_id, observation).await
+    }
+
+    async fn complete_removal(&self, removal: &RuntimeRemoval) -> RuntimeResult<RuntimeUnitRecord> {
+        self.inner.complete_removal(removal).await
+    }
+}
+
 #[async_trait]
 impl RuntimeDriver for TestDriver {
     fn provider_id(&self) -> &ProviderId {
@@ -86,6 +163,9 @@ impl RuntimeDriver for TestDriver {
     }
 
     async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
+        if self.hang_capabilities.load(Ordering::SeqCst) {
+            return std::future::pending::<RuntimeResult<RuntimeCapabilities>>().await;
+        }
         Ok(self.capabilities.clone())
     }
 
@@ -95,6 +175,9 @@ impl RuntimeDriver for TestDriver {
         current: &RuntimeObservation,
     ) -> RuntimeResult<RuntimeObservation> {
         self.apply_calls.fetch_add(1, Ordering::SeqCst);
+        if self.hang_apply.load(Ordering::SeqCst) {
+            return std::future::pending::<RuntimeResult<RuntimeObservation>>().await;
+        }
         if self.fail_next_apply.swap(false, Ordering::SeqCst) {
             return Err(RuntimeError::Transport("ambiguous apply".into()));
         }
@@ -244,6 +327,9 @@ impl RuntimeDriver for TestDriver {
         request: &RuntimeExecRequest,
     ) -> RuntimeResult<RuntimeExecResult> {
         self.exec_calls.fetch_add(1, Ordering::SeqCst);
+        if self.hang_exec.load(Ordering::SeqCst) {
+            return std::future::pending::<RuntimeResult<RuntimeExecResult>>().await;
+        }
         let mut observation = unit.observation.clone();
         if self.substitute_exec_spec.load(Ordering::SeqCst) {
             observation.spec_digest = digest('f');
@@ -924,6 +1010,228 @@ async fn expired_requests_never_reserve_or_dispatch() {
         store.load("expired-service").await,
         Err(RuntimeError::NotFound { .. })
     ));
+}
+
+#[tokio::test]
+async fn file_operation_leases_serialize_one_unit_but_not_different_units() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let first = store.acquire_operation_lease("lease-unit").await.unwrap();
+
+    assert!(tokio::time::timeout(
+        Duration::from_millis(20),
+        store.acquire_operation_lease("lease-unit"),
+    )
+    .await
+    .is_err());
+    let different = tokio::time::timeout(
+        Duration::from_millis(100),
+        store.acquire_operation_lease("different-unit"),
+    )
+    .await
+    .expect("a different unit must not wait behind the held lease")
+    .unwrap();
+
+    drop(different);
+    drop(first);
+}
+
+#[tokio::test]
+async fn subprocess_operation_lease_helper() {
+    let Ok(root) = std::env::var("A3S_RUNTIME_LEASE_HELPER_ROOT") else {
+        return;
+    };
+    let unit_id = std::env::var("A3S_RUNTIME_LEASE_HELPER_UNIT").unwrap();
+    let ready = std::env::var("A3S_RUNTIME_LEASE_HELPER_READY").unwrap();
+    let release = std::env::var("A3S_RUNTIME_LEASE_HELPER_RELEASE").unwrap();
+    let store = FileRuntimeStateStore::new(root);
+    let _lease = store.acquire_operation_lease(&unit_id).await.unwrap();
+    std::fs::write(&ready, b"ready").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !std::path::Path::new(&release).is_file() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("parent did not release the subprocess lease");
+}
+
+#[tokio::test]
+async fn file_operation_lease_serializes_independent_processes() {
+    use std::process::Command;
+
+    let directory = tempfile::tempdir().unwrap();
+    let ready = directory.path().join("helper.ready");
+    let release = directory.path().join("helper.release");
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("subprocess_operation_lease_helper")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env("A3S_RUNTIME_LEASE_HELPER_ROOT", directory.path())
+        .env("A3S_RUNTIME_LEASE_HELPER_UNIT", "cross-process-unit")
+        .env("A3S_RUNTIME_LEASE_HELPER_READY", &ready)
+        .env("A3S_RUNTIME_LEASE_HELPER_RELEASE", &release)
+        .spawn()
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !ready.is_file() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("subprocess did not acquire the operation lease");
+
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let waiting_store = store.clone();
+    let waiter = tokio::spawn(async move {
+        waiting_store
+            .acquire_operation_lease("cross-process-unit")
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!waiter.is_finished());
+    let different = tokio::time::timeout(
+        Duration::from_millis(100),
+        store.acquire_operation_lease("cross-process-other"),
+    )
+    .await
+    .expect("different-unit cross-process lease was blocked")
+    .unwrap();
+    drop(different);
+
+    std::fs::write(&release, b"release").unwrap();
+    let acquired = tokio::time::timeout(Duration::from_secs(10), waiter)
+        .await
+        .expect("same-unit waiter did not acquire after subprocess release")
+        .unwrap()
+        .unwrap();
+    drop(acquired);
+    assert!(child.wait().unwrap().success());
+}
+
+#[tokio::test]
+async fn deadline_is_rechecked_after_the_operation_lease_wait() {
+    let directory = tempfile::tempdir().unwrap();
+    let file_store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let held = file_store
+        .acquire_operation_lease("post-lease-deadline")
+        .await
+        .unwrap();
+    let lease_started = Arc::new(Notify::new());
+    let state: Arc<dyn RuntimeStateStore> = Arc::new(SignalingStateStore {
+        inner: file_store.clone(),
+        lease_started: lease_started.clone(),
+    });
+    let driver = Arc::new(TestDriver::new());
+    let clock = Arc::new(ManualClock::new(NOW));
+    let client = ManagedRuntimeClient::with_clock(state, driver.clone(), clock.clone());
+    let mut request = apply("post-lease-deadline", service("post-lease-deadline", 1));
+    request.deadline_at_ms = Some(NOW + 1_000);
+
+    let operation = tokio::spawn(async move { client.apply(&request).await });
+    lease_started.notified().await;
+    clock.set(NOW + 1_000);
+    drop(held);
+
+    assert!(matches!(
+        operation.await.unwrap(),
+        Err(RuntimeError::DeadlineExceeded(message))
+            if message.contains("before provider dispatch")
+    ));
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        file_store.load("post-lease-deadline").await,
+        Err(RuntimeError::NotFound { .. })
+    ));
+}
+
+#[tokio::test]
+async fn deadlines_bound_capability_queries_and_provider_dispatch() {
+    let capability_driver = Arc::new(TestDriver::new());
+    capability_driver
+        .hang_capabilities
+        .store(true, Ordering::SeqCst);
+    let (client, store) = capability_driver.client();
+    let mut request = apply("capability-timeout", service("capability-timeout", 1));
+    request.deadline_at_ms = Some(NOW + 10);
+    assert!(matches!(
+        client.apply(&request).await,
+        Err(RuntimeError::DeadlineExceeded(message))
+            if message.contains("capability query")
+    ));
+    assert!(matches!(
+        store.load("capability-timeout").await,
+        Err(RuntimeError::NotFound { .. })
+    ));
+    assert_eq!(capability_driver.apply_calls.load(Ordering::SeqCst), 0);
+
+    let provider_driver = Arc::new(TestDriver::new());
+    provider_driver.hang_apply.store(true, Ordering::SeqCst);
+    let (client, store) = provider_driver.client();
+    let mut request = apply("provider-timeout", service("provider-timeout", 1));
+    request.deadline_at_ms = Some(NOW + 10);
+    assert!(matches!(
+        client.apply(&request).await,
+        Err(RuntimeError::DeadlineExceeded(message)) if message.contains("provider apply")
+    ));
+    let pending = store.load("provider-timeout").await.unwrap();
+    assert_eq!(
+        pending.receipt("provider-timeout").unwrap().state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
+    assert_eq!(provider_driver.apply_calls.load(Ordering::SeqCst), 1);
+
+    provider_driver.hang_apply.store(false, Ordering::SeqCst);
+    assert_eq!(
+        client.apply(&request).await.unwrap().state,
+        RuntimeUnitState::Running
+    );
+    assert_eq!(provider_driver.apply_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn exec_uses_the_smaller_relative_or_absolute_deadline() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, _) = driver.client();
+    client
+        .apply(&apply("exec-deadline-apply", service("exec-deadline", 1)))
+        .await
+        .unwrap();
+    driver.hang_exec.store(true, Ordering::SeqCst);
+
+    assert!(matches!(
+        client
+            .exec(&RuntimeExecRequest {
+                schema: RuntimeExecRequest::SCHEMA.into(),
+                request_id: "exec-relative-deadline".into(),
+                unit_id: "exec-deadline".into(),
+                generation: 1,
+                command: vec!["/bin/true".into()],
+                timeout_ms: 10,
+                deadline_at_ms: Some(NOW + 1_000),
+            })
+            .await,
+        Err(RuntimeError::DeadlineExceeded(message)) if message.contains("provider exec")
+    ));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+
+    assert!(matches!(
+        client
+            .exec(&RuntimeExecRequest {
+                schema: RuntimeExecRequest::SCHEMA.into(),
+                request_id: "exec-absolute-deadline".into(),
+                unit_id: "exec-deadline".into(),
+                generation: 1,
+                command: vec!["/bin/true".into()],
+                timeout_ms: 1_000,
+                deadline_at_ms: Some(NOW),
+            })
+            .await,
+        Err(RuntimeError::DeadlineExceeded(_))
+    ));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

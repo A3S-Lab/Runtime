@@ -1,6 +1,6 @@
 use super::{
-    RuntimeActionKind, RuntimeRequestKind, RuntimeRequestReceipt, RuntimeRequestState,
-    RuntimeStateReservation, RuntimeStateStore, RuntimeUnitRecord,
+    RuntimeActionKind, RuntimeOperationLease, RuntimeRequestKind, RuntimeRequestReceipt,
+    RuntimeRequestState, RuntimeStateReservation, RuntimeStateStore, RuntimeUnitRecord,
 };
 use crate::contract::{
     RuntimeActionRequest, RuntimeApplyRequest, RuntimeObservation, RuntimeRemoval, RuntimeUnitState,
@@ -21,6 +21,18 @@ pub struct FileRuntimeStateStore {
 impl FileRuntimeStateStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+
+    fn acquire_operation_lease_sync(&self, unit_id: &str) -> RuntimeResult<FileOperationLease> {
+        validate_unit_id(unit_id)?;
+        ensure_directory(&self.root)?;
+        let operations = self.root.join("operations");
+        ensure_directory(&operations)?;
+        let path = operations.join(format!("{}.lock", storage_key(unit_id)));
+        let file = owner_only_open(&path, "Runtime operation lease")?;
+        file.lock_exclusive()
+            .map_err(io_error("lock Runtime operation"))?;
+        Ok(FileOperationLease(file))
     }
 
     fn reserve_apply_sync(
@@ -246,7 +258,10 @@ impl FileRuntimeStateStore {
         ensure_directory(&self.root)?;
         let locks = self.root.join("locks");
         ensure_directory(&locks)?;
-        let file = owner_only_open(&locks.join(format!("{}.lock", storage_key(unit_id))))?;
+        let file = owner_only_open(
+            &locks.join(format!("{}.lock", storage_key(unit_id))),
+            "Runtime state lock",
+        )?;
         file.lock_exclusive()
             .map_err(io_error("lock Runtime unit"))?;
         Ok(StateLock(file))
@@ -262,6 +277,19 @@ impl FileRuntimeStateStore {
 
 #[async_trait]
 impl RuntimeStateStore for FileRuntimeStateStore {
+    async fn acquire_operation_lease(
+        &self,
+        unit_id: &str,
+    ) -> RuntimeResult<Box<dyn RuntimeOperationLease>> {
+        let store = self.clone();
+        let unit_id = unit_id.to_owned();
+        let lease =
+            tokio::task::spawn_blocking(move || store.acquire_operation_lease_sync(&unit_id))
+                .await
+                .map_err(task_error)??;
+        Ok(Box::new(lease))
+    }
+
     async fn reserve_apply(
         &self,
         request: &RuntimeApplyRequest,
@@ -426,6 +454,16 @@ impl Drop for StateLock {
     }
 }
 
+struct FileOperationLease(File);
+
+impl RuntimeOperationLease for FileOperationLease {}
+
+impl Drop for FileOperationLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
 fn storage_key(unit_id: &str) -> String {
     format!("{:x}", Sha256::digest(unit_id.as_bytes()))
 }
@@ -455,8 +493,8 @@ fn ensure_directory(path: &Path) -> RuntimeResult<()> {
     Ok(())
 }
 
-fn owner_only_open(path: &Path) -> RuntimeResult<File> {
-    reject_symlink(path, "Runtime state lock")?;
+fn owner_only_open(path: &Path, label: &str) -> RuntimeResult<File> {
+    reject_symlink(path, label)?;
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]

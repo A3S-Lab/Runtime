@@ -13,8 +13,17 @@ pub use record::{
     RuntimeStateReservation, RuntimeUnitRecord,
 };
 
+/// Owned guard for one unit's cross-process operation lease. Implementations
+/// release the lease when the guard is dropped.
+pub trait RuntimeOperationLease: Send {}
+
 #[async_trait]
 pub trait RuntimeStateStore: Send + Sync {
+    async fn acquire_operation_lease(
+        &self,
+        unit_id: &str,
+    ) -> RuntimeResult<Box<dyn RuntimeOperationLease>>;
+
     async fn reserve_apply(
         &self,
         request: &RuntimeApplyRequest,

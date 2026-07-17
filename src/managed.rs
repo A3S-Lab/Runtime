@@ -8,7 +8,9 @@ use crate::{
     RuntimeStateStore, SystemRuntimeClock,
 };
 use async_trait::async_trait;
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Shared durable lifecycle implementation used by provider integrations.
 pub struct ManagedRuntimeClient {
@@ -55,6 +57,44 @@ impl ManagedRuntimeClient {
         }
         Ok(())
     }
+
+    async fn bounded<T, F>(
+        &self,
+        deadline_at_ms: Option<u64>,
+        stage: &'static str,
+        future: F,
+    ) -> RuntimeResult<T>
+    where
+        T: Send,
+        F: Future<Output = RuntimeResult<T>> + Send,
+    {
+        let Some(deadline_at_ms) = deadline_at_ms else {
+            return future.await;
+        };
+        let now_ms = self.clock.now_ms();
+        let Some(remaining_ms) = deadline_at_ms.checked_sub(now_ms) else {
+            return Err(RuntimeError::DeadlineExceeded(format!(
+                "request expired before {stage}"
+            )));
+        };
+        if remaining_ms == 0 {
+            return Err(RuntimeError::DeadlineExceeded(format!(
+                "request expired before {stage}"
+            )));
+        }
+        tokio::time::timeout(Duration::from_millis(remaining_ms), future)
+            .await
+            .map_err(|_| {
+                RuntimeError::DeadlineExceeded(format!("request deadline elapsed during {stage}"))
+            })?
+    }
+
+    fn exec_deadline(&self, request: &RuntimeExecRequest) -> u64 {
+        let relative = self.clock.now_ms().saturating_add(request.timeout_ms);
+        request
+            .deadline_at_ms
+            .map_or(relative, |absolute| absolute.min(relative))
+    }
 }
 
 #[async_trait]
@@ -66,13 +106,28 @@ impl RuntimeClient for ManagedRuntimeClient {
     async fn apply(&self, request: &RuntimeApplyRequest) -> RuntimeResult<RuntimeObservation> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
         self.check_deadline(request.deadline_at_ms)?;
-        let capabilities = self.checked_capabilities().await?;
+        let capabilities = self
+            .bounded(
+                request.deadline_at_ms,
+                "capability query",
+                self.checked_capabilities(),
+            )
+            .await?;
         let missing = capabilities
             .missing_for(&request.spec)
             .map_err(RuntimeError::InvalidRequest)?;
         if !missing.is_empty() {
             return Err(RuntimeError::UnsupportedCapabilities(missing));
         }
+
+        let _lease = self
+            .bounded(
+                request.deadline_at_ms,
+                "operation lease wait",
+                self.state.acquire_operation_lease(&request.spec.unit_id),
+            )
+            .await?;
+        self.check_deadline(request.deadline_at_ms)?;
 
         let reservation = self
             .state
@@ -85,8 +140,12 @@ impl RuntimeClient for ManagedRuntimeClient {
         }
 
         let observation = self
-            .driver
-            .apply(&request.spec, &reservation.record.observation)
+            .bounded(
+                request.deadline_at_ms,
+                "provider apply",
+                self.driver
+                    .apply(&request.spec, &reservation.record.observation),
+            )
             .await?;
         observation
             .validate_against(&request.spec)
@@ -100,6 +159,7 @@ impl RuntimeClient for ManagedRuntimeClient {
     }
 
     async fn inspect(&self, unit_id: &str) -> RuntimeResult<RuntimeInspection> {
+        let _lease = self.state.acquire_operation_lease(unit_id).await?;
         let record = match self.state.load(unit_id).await {
             Ok(record) => record,
             Err(RuntimeError::NotFound { .. }) => {
@@ -161,12 +221,26 @@ impl RuntimeClient for ManagedRuntimeClient {
     async fn stop(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeInspection> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
         self.check_deadline(request.deadline_at_ms)?;
-        let capabilities = self.checked_capabilities().await?;
+        let capabilities = self
+            .bounded(
+                request.deadline_at_ms,
+                "capability query",
+                self.checked_capabilities(),
+            )
+            .await?;
         if !capabilities.supports_feature(crate::contract::RuntimeFeature::Stop) {
             return Err(RuntimeError::UnsupportedCapabilities(vec![
                 "feature:Stop".into()
             ]));
         }
+        let _lease = self
+            .bounded(
+                request.deadline_at_ms,
+                "operation lease wait",
+                self.state.acquire_operation_lease(&request.unit_id),
+            )
+            .await?;
+        self.check_deadline(request.deadline_at_ms)?;
         let reservation = self
             .state
             .reserve_action(RuntimeActionKind::Stop, request, self.clock.now_ms())
@@ -179,7 +253,13 @@ impl RuntimeClient for ManagedRuntimeClient {
                 })?),
             });
         }
-        let observation = self.driver.stop(&reservation.record, request).await?;
+        let observation = self
+            .bounded(
+                request.deadline_at_ms,
+                "provider stop",
+                self.driver.stop(&reservation.record, request),
+            )
+            .await?;
         observation
             .validate_against(&reservation.record.spec)
             .map_err(RuntimeError::Protocol)?;
@@ -197,12 +277,26 @@ impl RuntimeClient for ManagedRuntimeClient {
     async fn remove(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeRemoval> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
         self.check_deadline(request.deadline_at_ms)?;
-        let capabilities = self.checked_capabilities().await?;
+        let capabilities = self
+            .bounded(
+                request.deadline_at_ms,
+                "capability query",
+                self.checked_capabilities(),
+            )
+            .await?;
         if !capabilities.supports_feature(crate::contract::RuntimeFeature::Remove) {
             return Err(RuntimeError::UnsupportedCapabilities(vec![
                 "feature:Remove".into(),
             ]));
         }
+        let _lease = self
+            .bounded(
+                request.deadline_at_ms,
+                "operation lease wait",
+                self.state.acquire_operation_lease(&request.unit_id),
+            )
+            .await?;
+        self.check_deadline(request.deadline_at_ms)?;
         let reservation = self
             .state
             .reserve_action(RuntimeActionKind::Remove, request, self.clock.now_ms())
@@ -212,7 +306,13 @@ impl RuntimeClient for ManagedRuntimeClient {
                 RuntimeError::Protocol("completed remove receipt has no removal".into())
             });
         }
-        let removal = self.driver.remove(&reservation.record, request).await?;
+        let removal = self
+            .bounded(
+                request.deadline_at_ms,
+                "provider remove",
+                self.driver.remove(&reservation.record, request),
+            )
+            .await?;
         removal.validate().map_err(RuntimeError::Protocol)?;
         if removal.request_id != request.request_id
             || removal.unit_id != request.unit_id
@@ -234,6 +334,7 @@ impl RuntimeClient for ManagedRuntimeClient {
                 "feature:Logs".into()
             ]));
         }
+        let _lease = self.state.acquire_operation_lease(&query.unit_id).await?;
         let record = self.state.load(&query.unit_id).await?;
         ensure_current_generation(&record, query.generation)?;
         let chunks = self.driver.logs(&record, query).await?;
@@ -253,12 +354,28 @@ impl RuntimeClient for ManagedRuntimeClient {
 
     async fn exec(&self, request: &RuntimeExecRequest) -> RuntimeResult<RuntimeExecResult> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
-        let capabilities = self.checked_capabilities().await?;
+        let deadline_at_ms = Some(self.exec_deadline(request));
+        self.check_deadline(deadline_at_ms)?;
+        let capabilities = self
+            .bounded(
+                deadline_at_ms,
+                "capability query",
+                self.checked_capabilities(),
+            )
+            .await?;
         if !capabilities.supports_feature(crate::contract::RuntimeFeature::Exec) {
             return Err(RuntimeError::UnsupportedCapabilities(vec![
                 "feature:Exec".into()
             ]));
         }
+        let _lease = self
+            .bounded(
+                deadline_at_ms,
+                "operation lease wait",
+                self.state.acquire_operation_lease(&request.unit_id),
+            )
+            .await?;
+        self.check_deadline(deadline_at_ms)?;
         let record = self.state.load(&request.unit_id).await?;
         ensure_current_generation(&record, request.generation)?;
         if record.observation.state != RuntimeUnitState::Running {
@@ -267,7 +384,13 @@ impl RuntimeClient for ManagedRuntimeClient {
                 request.unit_id, record.observation.state
             )));
         }
-        let result = self.driver.exec(&record, request).await?;
+        let result = self
+            .bounded(
+                deadline_at_ms,
+                "provider exec",
+                self.driver.exec(&record, request),
+            )
+            .await?;
         result.validate().map_err(RuntimeError::Protocol)?;
         result
             .observation

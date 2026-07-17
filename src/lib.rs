@@ -21,6 +21,7 @@ pub use managed::ManagedRuntimeClient;
 pub use provider::ProviderId;
 pub use registry::{RuntimeClientRegistry, RuntimeProviderFactory};
 pub use state::{
-    FileRuntimeStateStore, RuntimeActionKind, RuntimeRequestKind, RuntimeRequestReceipt,
-    RuntimeRequestState, RuntimeStateReservation, RuntimeStateStore, RuntimeUnitRecord,
+    FileRuntimeStateStore, RuntimeActionKind, RuntimeOperationLease, RuntimeRequestKind,
+    RuntimeRequestReceipt, RuntimeRequestState, RuntimeStateReservation, RuntimeStateStore,
+    RuntimeUnitRecord,
 };

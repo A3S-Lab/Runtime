@@ -116,7 +116,11 @@ An exact retry returns or reconstructs the same logical result. Reusing a
 request ID with different content fails with `RequestConflict`. A completed
 receipt remains replayable after its original deadline and after later
 lifecycle operations; an expired pending request is not redispatched. A
-deadline is checked independently before new provider work.
+deadline is checked independently before new provider work. On the first exec
+reservation, Runtime persists the smaller of `started_at + timeout_ms` and the
+optional caller deadline. `RuntimeDriver::exec` receives that effective
+absolute deadline in `deadline_at_ms`, and every pending replay receives the
+same value, so retrying cannot restart or extend the execution window.
 
 ## Capabilities
 

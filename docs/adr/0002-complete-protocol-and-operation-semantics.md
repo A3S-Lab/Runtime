@@ -216,7 +216,10 @@ deadline and is never redispatched after that deadline expires.
 The request receipt stores the effective absolute deadline captured on first
 reservation. For Exec this is the smaller of the first attempt's relative
 timeout and optional absolute deadline; a retry cannot restart that relative
-timeout window.
+timeout window. Before provider dispatch, `ManagedRuntimeClient` replaces the
+driver-bound exec request's optional caller deadline with that persisted
+effective absolute deadline. The driver therefore receives the same non-null
+`deadline_at_ms` on the first dispatch and every pending replay.
 
 Drivers may enforce a shorter provider-specific timeout. They must never extend
 the caller deadline. Exec uses the smaller of its relative `timeout_ms` and an

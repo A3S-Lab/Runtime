@@ -47,6 +47,15 @@ pub trait RuntimeDriver: Send + Sync {
         query: &RuntimeLogQuery,
     ) -> RuntimeResult<Vec<RuntimeLogChunk>>;
 
+    /// Executes one durably identified request within its original budget.
+    ///
+    /// `ManagedRuntimeClient` always supplies `request.deadline_at_ms` as the
+    /// effective absolute deadline captured by the first reservation: the
+    /// smaller of that attempt's `timeout_ms` window and any caller-provided
+    /// absolute deadline. A pending replay receives the same persisted value,
+    /// so a driver must not restart or extend the execution window. Drivers may
+    /// enforce a shorter provider-specific timeout and must deduplicate or
+    /// reattach the stable request ID after an ambiguous result.
     async fn exec(
         &self,
         unit: &RuntimeUnitRecord,

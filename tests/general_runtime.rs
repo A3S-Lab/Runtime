@@ -730,8 +730,7 @@ async fn generation_reconciliation_retires_the_previous_resource_on_success() {
     let directory = tempfile::tempdir().unwrap();
     let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
     let driver = Arc::new(GenerationDriver::new());
-    let client =
-        ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+    let client = ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
 
     client
         .apply(&apply(
@@ -759,11 +758,8 @@ async fn generation_reconciliation_recovers_create_before_error_after_restart() 
     let directory = tempfile::tempdir().unwrap();
     let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
     let driver = Arc::new(GenerationDriver::new());
-    let client = ManagedRuntimeClient::with_clock(
-        store.clone(),
-        driver.clone(),
-        Arc::new(FixedClock),
-    );
+    let client =
+        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), Arc::new(FixedClock));
     client
         .apply(&apply(
             "generation-recovery-one",
@@ -772,10 +768,7 @@ async fn generation_reconciliation_recovers_create_before_error_after_restart() 
         .await
         .unwrap();
 
-    let second = apply(
-        "generation-recovery-two",
-        service("generation-recovery", 2),
-    );
+    let second = apply("generation-recovery-two", service("generation-recovery", 2));
     driver.fail_after_create.store(true, Ordering::SeqCst);
     assert!(matches!(
         client.apply(&second).await,
@@ -792,8 +785,7 @@ async fn generation_reconciliation_recovers_create_before_error_after_restart() 
     );
 
     drop(client);
-    let restarted =
-        ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+    let restarted = ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
     let recovered = restarted.apply(&second).await.unwrap();
     assert_eq!(recovered.generation, 2);
     assert_eq!(driver.generations("generation-recovery"), vec![2]);

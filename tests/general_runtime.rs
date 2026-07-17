@@ -110,6 +110,139 @@ impl TestDriver {
     }
 }
 
+struct GenerationDriver {
+    provider: ProviderId,
+    resources: Mutex<BTreeMap<String, BTreeMap<u64, String>>>,
+    fail_after_create: AtomicBool,
+    apply_calls: AtomicUsize,
+}
+
+impl GenerationDriver {
+    fn new() -> Self {
+        Self {
+            provider: ProviderId::parse("generation-runtime").unwrap(),
+            resources: Mutex::new(BTreeMap::new()),
+            fail_after_create: AtomicBool::new(false),
+            apply_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn generations(&self, unit_id: &str) -> Vec<u64> {
+        self.resources
+            .lock()
+            .unwrap()
+            .get(unit_id)
+            .map(|resources| resources.keys().copied().collect())
+            .unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl RuntimeDriver for GenerationDriver {
+    fn provider_id(&self) -> &ProviderId {
+        &self.provider
+    }
+
+    async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
+        Ok(capabilities(self.provider.clone()))
+    }
+
+    async fn apply(
+        &self,
+        spec: &RuntimeUnitSpec,
+        current: &RuntimeObservation,
+    ) -> RuntimeResult<RuntimeObservation> {
+        self.apply_calls.fetch_add(1, Ordering::SeqCst);
+        let resource_id = {
+            let mut inventory = self.resources.lock().unwrap();
+            inventory
+                .entry(spec.unit_id.clone())
+                .or_default()
+                .entry(spec.generation)
+                .or_insert_with(|| format!("provider/{}/g{}", spec.unit_id, spec.generation))
+                .clone()
+        };
+        if self.fail_after_create.swap(false, Ordering::SeqCst) {
+            return Err(RuntimeError::Transport(
+                "ambiguous generation handoff".into(),
+            ));
+        }
+        self.resources
+            .lock()
+            .unwrap()
+            .entry(spec.unit_id.clone())
+            .or_default()
+            .retain(|generation, _| *generation == spec.generation);
+
+        let mut observation = current.clone();
+        observation.state = match spec.class {
+            RuntimeUnitClass::Task => RuntimeUnitState::Succeeded,
+            RuntimeUnitClass::Service => RuntimeUnitState::Running,
+        };
+        observation.provider_resource_id = Some(resource_id);
+        observation.provider_build = Some("generation-driver/1".into());
+        observation.observed_at_ms = NOW + spec.generation;
+        observation.started_at_ms = Some(NOW);
+        observation.finished_at_ms =
+            (spec.class == RuntimeUnitClass::Task).then_some(observation.observed_at_ms);
+        observation.health = spec.health.as_ref().map(|_| RuntimeHealthObservation {
+            state: RuntimeHealthState::Healthy,
+            checked_at_ms: observation.observed_at_ms,
+            message: None,
+        });
+        observation
+            .validate_against(spec)
+            .map_err(RuntimeError::Protocol)?;
+        Ok(observation)
+    }
+
+    async fn inspect(&self, _unit: &RuntimeUnitRecord) -> RuntimeResult<RuntimeInspection> {
+        Err(RuntimeError::Protocol(
+            "generation test did not expect inspect".into(),
+        ))
+    }
+
+    async fn stop(
+        &self,
+        _unit: &RuntimeUnitRecord,
+        _request: &RuntimeActionRequest,
+    ) -> RuntimeResult<RuntimeObservation> {
+        Err(RuntimeError::Protocol(
+            "generation test did not expect stop".into(),
+        ))
+    }
+
+    async fn remove(
+        &self,
+        _unit: &RuntimeUnitRecord,
+        _request: &RuntimeActionRequest,
+    ) -> RuntimeResult<RuntimeRemoval> {
+        Err(RuntimeError::Protocol(
+            "generation test did not expect remove".into(),
+        ))
+    }
+
+    async fn logs(
+        &self,
+        _unit: &RuntimeUnitRecord,
+        _query: &RuntimeLogQuery,
+    ) -> RuntimeResult<Vec<RuntimeLogChunk>> {
+        Err(RuntimeError::Protocol(
+            "generation test did not expect logs".into(),
+        ))
+    }
+
+    async fn exec(
+        &self,
+        _unit: &RuntimeUnitRecord,
+        _request: &RuntimeExecRequest,
+    ) -> RuntimeResult<RuntimeExecResult> {
+        Err(RuntimeError::Protocol(
+            "generation test did not expect exec".into(),
+        ))
+    }
+}
+
 struct SignalingStateStore {
     inner: Arc<FileRuntimeStateStore>,
     lease_started: Arc<Notify>,
@@ -590,6 +723,84 @@ async fn request_and_generation_conflicts_fail_closed() {
             .await,
         Err(RuntimeError::StaleGeneration { .. })
     ));
+}
+
+#[tokio::test]
+async fn generation_reconciliation_retires_the_previous_resource_on_success() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(GenerationDriver::new());
+    let client =
+        ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+
+    client
+        .apply(&apply(
+            "generation-success-one",
+            service("generation-success", 1),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(driver.generations("generation-success"), vec![1]);
+
+    let observation = client
+        .apply(&apply(
+            "generation-success-two",
+            service("generation-success", 2),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(observation.generation, 2);
+    assert_eq!(driver.generations("generation-success"), vec![2]);
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn generation_reconciliation_recovers_create_before_error_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(GenerationDriver::new());
+    let client = ManagedRuntimeClient::with_clock(
+        store.clone(),
+        driver.clone(),
+        Arc::new(FixedClock),
+    );
+    client
+        .apply(&apply(
+            "generation-recovery-one",
+            service("generation-recovery", 1),
+        ))
+        .await
+        .unwrap();
+
+    let second = apply(
+        "generation-recovery-two",
+        service("generation-recovery", 2),
+    );
+    driver.fail_after_create.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        client.apply(&second).await,
+        Err(RuntimeError::Transport(message)) if message.contains("ambiguous generation handoff")
+    ));
+    assert_eq!(driver.generations("generation-recovery"), vec![1, 2]);
+    assert_eq!(
+        store
+            .load_request("generation-recovery", "generation-recovery-two")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
+
+    drop(client);
+    let restarted =
+        ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+    let recovered = restarted.apply(&second).await.unwrap();
+    assert_eq!(recovered.generation, 2);
+    assert_eq!(driver.generations("generation-recovery"), vec![2]);
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 3);
+
+    assert_eq!(restarted.apply(&second).await.unwrap(), recovered);
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]

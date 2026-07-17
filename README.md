@@ -174,8 +174,11 @@ ManagedRuntimeClient
 
 Provider `apply` must be idempotent for the supplied unit ID and generation.
 After an ambiguous acknowledgement, a repeated call must discover or converge
-the same resource rather than create another one. Provider-specific labels,
-SDK handles, container fields, and transport details stay behind the driver.
+the same resource rather than create another one. A successful generation
+handoff must retire all older provider generations and verify that exactly the
+current resource remains; interrupted handoffs finish on exact retry.
+Provider-specific labels, SDK handles, container fields, and transport details
+stay behind the driver.
 
 ## Conformance
 

@@ -11,6 +11,10 @@ use async_trait::async_trait;
 /// Drivers do not own request idempotency or durable shared state. `apply`,
 /// `stop`, and `remove` must nevertheless be safe to reattach after an
 /// ambiguous transport failure using the stable unit identity and generation.
+/// A successful `apply` must also retire every older provider generation for
+/// the unit before returning, leaving exactly one managed provider resource.
+/// If that handoff is interrupted, an exact retry must discover the partially
+/// created current generation and finish the same reconciliation.
 #[async_trait]
 pub trait RuntimeDriver: Send + Sync {
     fn provider_id(&self) -> &ProviderId;

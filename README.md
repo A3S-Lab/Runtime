@@ -51,8 +51,9 @@ their owning applications.
   cross-process locks without following symbolic-link state boundaries
 - **Logs and Exec**: Expose generation-bound log and exec surfaces only when a
   provider reports the corresponding capability
-- **Conformance Suite**: Exercise the common Task and Service lifecycle against
-  provider-owned disposable resources
+- **Capability-Driven Conformance**: Always run complete Base and Recovery
+  profiles, automatically activate advertised optional profiles, and reject
+  missing fixtures, incomplete evidence, or provider inventory leaks
 
 ## Runtime Model
 
@@ -182,29 +183,32 @@ stay behind the driver.
 
 ## Conformance
 
-Provider repositories should run `verify_runtime_provider` against real,
-disposable infrastructure:
+Production provider repositories should implement `RuntimeConformanceFixture`
+and run `verify_runtime_profiles` against real, disposable infrastructure:
 
 ```rust,ignore
-use a3s_runtime::{verify_runtime_provider, RuntimeConformanceCase};
+use a3s_runtime::{verify_runtime_profiles, RuntimeConformanceFixture};
 
-let case = RuntimeConformanceCase {
-    task_apply,
-    task_remove,
-    service_apply,
-    service_stop,
-    service_remove,
-};
-
-let report = verify_runtime_provider(client.as_ref(), &case).await?;
-assert!(report.task.converges(&task_spec));
-assert!(report.service.converges(&service_spec));
+let fixture: &dyn RuntimeConformanceFixture = provider_fixture;
+let report = verify_runtime_profiles(client.as_ref(), fixture).await?;
+assert_eq!(report.inventory_before, report.inventory_after);
 ```
 
-The shared suite validates capability matching, exact apply replay, inspection,
-stop replay, removal replay, and generation-aware absence for both lifecycle
-classes. Provider repositories remain responsible for crash injection,
-reconstruction, provider-specific security, and resource-leak tests.
+The mandatory Base profile covers successful, failed, and timed-out Tasks;
+Service apply, inspect, stop, and removal; exact replay; generation conflicts;
+and tombstones. Recovery is mandatory for every production provider.
+Networking, Mounts, Health, Resources, Logs, Exec, Security, Outputs, and
+Evidence activate from reported capabilities. A fixture must return the shared
+stable case IDs and capability claims for every activated profile, perform
+cleanup even after a failed profile, and prove that its canonical provider
+inventory returned to the pre-run baseline.
+
+`verify_runtime_provider` remains available as the lower-level successful Task
+and Service lifecycle check. It is not, by itself, production certification.
+Provider-specific fixtures still own real daemon restart, external deletion,
+security, resource-behavior, and destructive cleanup mechanics; the shared
+harness owns activation, required case/claim coverage, Base semantics, and the
+zero-inventory-delta oracle.
 
 See the [deep test plan](docs/deep-test-plan.md) for the full contract,
 durability, real-provider, fault, performance, soak, and A3S OS release gates.

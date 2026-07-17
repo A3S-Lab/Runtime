@@ -270,8 +270,8 @@ fn cleanup_stale_staging_files(parent: &Path) -> RuntimeResult<()> {
         let entry = entry.map_err(io_error("scan state staging file"))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if !name.starts_with(".tmp")
-            && !(name.starts_with(".a3s-runtime-") && name.ends_with(".tmp"))
+        if !(name.starts_with(".tmp")
+            || name.starts_with(".a3s-runtime-") && name.ends_with(".tmp"))
         {
             continue;
         }

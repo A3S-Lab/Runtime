@@ -376,25 +376,26 @@ impl RuntimeClient for ManagedRuntimeClient {
             )
             .await?;
         self.check_deadline(deadline_at_ms)?;
-        let record = self.state.load(&request.unit_id).await?;
-        ensure_current_generation(&record, request.generation)?;
-        if record.observation.state != RuntimeUnitState::Running {
-            return Err(RuntimeError::InvalidRequest(format!(
-                "Runtime exec requires a running unit; {:?} is {:?}",
-                request.unit_id, record.observation.state
-            )));
+        let reservation = self
+            .state
+            .reserve_exec(request, self.clock.now_ms())
+            .await?;
+        if !reservation.dispatch {
+            return reservation.receipt.exec_result.ok_or_else(|| {
+                RuntimeError::Protocol("completed exec receipt has no result".into())
+            });
         }
         let result = self
             .bounded(
                 deadline_at_ms,
                 "provider exec",
-                self.driver.exec(&record, request),
+                self.driver.exec(&reservation.record, request),
             )
             .await?;
         result.validate().map_err(RuntimeError::Protocol)?;
         result
             .observation
-            .validate_against(&record.spec)
+            .validate_against(&reservation.record.spec)
             .map_err(RuntimeError::Protocol)?;
         if result.request_id != request.request_id
             || result.observation.unit_id != request.unit_id
@@ -404,6 +405,7 @@ impl RuntimeClient for ManagedRuntimeClient {
                 "provider exec changed immutable request identity".into(),
             ));
         }
+        self.state.complete_exec(&result).await?;
         Ok(result)
     }
 }

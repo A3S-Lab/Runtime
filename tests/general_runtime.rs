@@ -139,8 +139,24 @@ impl RuntimeStateStore for SignalingStateStore {
         self.inner.reserve_action(kind, request, now_ms).await
     }
 
+    async fn reserve_exec(
+        &self,
+        request: &RuntimeExecRequest,
+        now_ms: u64,
+    ) -> RuntimeResult<RuntimeStateReservation> {
+        self.inner.reserve_exec(request, now_ms).await
+    }
+
     async fn load(&self, unit_id: &str) -> RuntimeResult<RuntimeUnitRecord> {
         self.inner.load(unit_id).await
+    }
+
+    async fn load_request(
+        &self,
+        unit_id: &str,
+        request_id: &str,
+    ) -> RuntimeResult<a3s_runtime::RuntimeRequestReceipt> {
+        self.inner.load_request(unit_id, request_id).await
     }
 
     async fn update_observation(
@@ -153,6 +169,10 @@ impl RuntimeStateStore for SignalingStateStore {
 
     async fn complete_removal(&self, removal: &RuntimeRemoval) -> RuntimeResult<RuntimeUnitRecord> {
         self.inner.complete_removal(removal).await
+    }
+
+    async fn complete_exec(&self, result: &RuntimeExecResult) -> RuntimeResult<RuntimeUnitRecord> {
+        self.inner.complete_exec(result).await
     }
 }
 
@@ -519,7 +539,11 @@ async fn ambiguous_apply_is_reentered_with_the_same_identity() {
     let pending = store.load("service-ambiguous").await.unwrap();
     assert_eq!(pending.observation.state, RuntimeUnitState::Accepted);
     assert_eq!(
-        pending.receipt("apply-ambiguous").unwrap().state,
+        store
+            .load_request("service-ambiguous", "apply-ambiguous")
+            .await
+            .unwrap()
+            .state,
         a3s_runtime::RuntimeRequestState::Pending
     );
 
@@ -855,6 +879,47 @@ async fn exec_result_must_bind_the_complete_unit_spec() {
     ));
 }
 
+#[tokio::test]
+async fn completed_exec_replays_durably_after_client_restart_and_rejects_conflicts() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, store) = driver.client();
+    client
+        .apply(&apply("exec-restart-apply", service("exec-restart", 1)))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-restart-request".into(),
+        unit_id: "exec-restart".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 1_000,
+        deadline_at_ms: None,
+    };
+    let expected = client.exec(&request).await.unwrap();
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .load_request("exec-restart", "exec-restart-request")
+            .await
+            .unwrap()
+            .exec_result,
+        Some(expected.clone())
+    );
+
+    let restarted = ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+    assert_eq!(restarted.exec(&request).await.unwrap(), expected);
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+
+    let mut conflicting = request;
+    conflicting.command = vec!["/bin/false".into()];
+    assert!(matches!(
+        restarted.exec(&conflicting).await,
+        Err(RuntimeError::RequestConflict { .. })
+    ));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn top_level_log_exec_and_inspection_records_require_current_schemas() {
     let mut query = RuntimeLogQuery {
@@ -980,6 +1045,22 @@ async fn log_and_exec_capabilities_use_the_active_generation() {
         .await
         .unwrap();
     assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        client
+            .exec(&RuntimeExecRequest {
+                schema: RuntimeExecRequest::SCHEMA.into(),
+                request_id: "exec-tools".into(),
+                unit_id: "service-tools".into(),
+                generation: 1,
+                command: vec!["/bin/true".into()],
+                timeout_ms: 1_000,
+                deadline_at_ms: None,
+            })
+            .await
+            .unwrap(),
+        result
+    );
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
 
     assert!(matches!(
         client
@@ -1176,11 +1257,11 @@ async fn deadlines_bound_capability_queries_and_provider_dispatch() {
         client.apply(&request).await,
         Err(RuntimeError::DeadlineExceeded(message)) if message.contains("provider apply")
     ));
-    let pending = store.load("provider-timeout").await.unwrap();
-    assert_eq!(
-        pending.receipt("provider-timeout").unwrap().state,
-        a3s_runtime::RuntimeRequestState::Pending
-    );
+    let pending = store
+        .load_request("provider-timeout", "provider-timeout")
+        .await
+        .unwrap();
+    assert_eq!(pending.state, a3s_runtime::RuntimeRequestState::Pending);
     assert_eq!(provider_driver.apply_calls.load(Ordering::SeqCst), 1);
 
     provider_driver.hang_apply.store(false, Ordering::SeqCst);
@@ -1334,11 +1415,58 @@ async fn concurrent_file_reservations_preserve_every_request() {
 
     let record = store.load("concurrent-service").await.unwrap();
     assert_eq!(record.spec, expected);
-    assert_eq!(record.requests.len(), 32);
-    assert!(record
-        .requests
-        .values()
-        .all(|receipt| receipt.state == a3s_runtime::RuntimeRequestState::Pending));
+    for index in 0..32 {
+        assert_eq!(
+            store
+                .load_request("concurrent-service", &format!("apply-{index}"))
+                .await
+                .unwrap()
+                .state,
+            a3s_runtime::RuntimeRequestState::Pending
+        );
+    }
+}
+
+#[tokio::test]
+async fn request_journal_preserves_more_than_ten_thousand_exact_replays() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(TestDriver::new());
+    let client =
+        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), Arc::new(FixedClock));
+    let spec = service("journal-capacity", 1);
+    client
+        .apply(&apply("journal-request-0", spec.clone()))
+        .await
+        .unwrap();
+    for index in 1..=10_000 {
+        client
+            .apply(&apply(&format!("journal-request-{index}"), spec.clone()))
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .load_request("journal-capacity", "journal-request-10000")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Completed
+    );
+    let unit_directory = std::fs::read_dir(directory.path().join("units"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(
+        std::fs::read_dir(unit_directory.join("requests"))
+            .unwrap()
+            .count(),
+        10_001
+    );
 }
 
 struct CountingFactory {
@@ -1443,6 +1571,91 @@ async fn file_state_store_rejects_symbolic_link_boundaries() {
     assert!(matches!(
         store.load("secure-unit").await,
         Err(RuntimeError::Protocol(_))
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn request_journal_layout_is_versioned_owner_only_and_fail_closed() {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(TestDriver::new());
+    let client = ManagedRuntimeClient::with_clock(store.clone(), driver, Arc::new(FixedClock));
+    client
+        .apply(&apply("layout-request", service("layout-unit", 1)))
+        .await
+        .unwrap();
+
+    let unit_directory = std::fs::read_dir(directory.path().join("units"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let record_path = unit_directory.join("record.json");
+    let receipt_path = std::fs::read_dir(unit_directory.join("requests"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
+    assert_eq!(record["schema"], a3s_runtime::RuntimeUnitRecord::SCHEMA);
+    assert!(record.get("requests").is_none());
+    assert_eq!(
+        receipt["schema"],
+        a3s_runtime::RuntimeRequestReceipt::SCHEMA
+    );
+    assert_eq!(
+        std::fs::metadata(&unit_directory)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        std::fs::metadata(&record_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(&receipt_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+
+    let mut unknown_field = receipt;
+    unknown_field["unexpected"] = serde_json::json!(true);
+    std::fs::write(&receipt_path, serde_json::to_vec(&unknown_field).unwrap()).unwrap();
+    assert!(matches!(
+        store.load_request("layout-unit", "layout-request").await,
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let legacy = tempfile::tempdir().unwrap();
+    let units = legacy.path().join("units");
+    std::fs::create_dir(&units).unwrap();
+    let key = format!("{:x}", Sha256::digest(b"legacy-unit"));
+    let legacy_record = units.join(format!("{key}.json"));
+    std::fs::write(&legacy_record, b"{}").unwrap();
+    std::fs::set_permissions(&legacy_record, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let legacy_store = FileRuntimeStateStore::new(legacy.path());
+    assert!(matches!(
+        legacy_store.load("legacy-unit").await,
+        Err(RuntimeError::Protocol(message)) if message.contains("explicit migration")
     ));
 }
 

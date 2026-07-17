@@ -2,7 +2,8 @@ mod file;
 mod record;
 
 use crate::contract::{
-    RuntimeActionRequest, RuntimeApplyRequest, RuntimeObservation, RuntimeRemoval,
+    RuntimeActionRequest, RuntimeApplyRequest, RuntimeExecRequest, RuntimeExecResult,
+    RuntimeObservation, RuntimeRemoval,
 };
 use crate::RuntimeResult;
 use async_trait::async_trait;
@@ -37,7 +38,19 @@ pub trait RuntimeStateStore: Send + Sync {
         now_ms: u64,
     ) -> RuntimeResult<RuntimeStateReservation>;
 
+    async fn reserve_exec(
+        &self,
+        request: &RuntimeExecRequest,
+        now_ms: u64,
+    ) -> RuntimeResult<RuntimeStateReservation>;
+
     async fn load(&self, unit_id: &str) -> RuntimeResult<RuntimeUnitRecord>;
+
+    async fn load_request(
+        &self,
+        unit_id: &str,
+        request_id: &str,
+    ) -> RuntimeResult<RuntimeRequestReceipt>;
 
     async fn update_observation(
         &self,
@@ -46,4 +59,6 @@ pub trait RuntimeStateStore: Send + Sync {
     ) -> RuntimeResult<RuntimeUnitRecord>;
 
     async fn complete_removal(&self, removal: &RuntimeRemoval) -> RuntimeResult<RuntimeUnitRecord>;
+
+    async fn complete_exec(&self, result: &RuntimeExecResult) -> RuntimeResult<RuntimeUnitRecord>;
 }

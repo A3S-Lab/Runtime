@@ -176,7 +176,7 @@ fn validate_action(
 
 fn require_found(label: &str, inspection: RuntimeInspection) -> RuntimeResult<RuntimeObservation> {
     match inspection {
-        RuntimeInspection::Found { observation } => Ok(*observation),
+        RuntimeInspection::Found { observation, .. } => Ok(*observation),
         RuntimeInspection::NotFound { .. } => Err(RuntimeError::Protocol(format!(
             "{label} unexpectedly returned not found"
         ))),

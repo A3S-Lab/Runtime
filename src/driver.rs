@@ -3,7 +3,7 @@ use crate::contract::{
     RuntimeInspection, RuntimeLogChunk, RuntimeLogQuery, RuntimeObservation, RuntimeRemoval,
     RuntimeUnitSpec,
 };
-use crate::{RuntimeResult, RuntimeUnitRecord};
+use crate::{ProviderId, RuntimeResult, RuntimeUnitRecord};
 use async_trait::async_trait;
 
 /// Provider-specific primitive used by `ManagedRuntimeClient`.
@@ -13,6 +13,8 @@ use async_trait::async_trait;
 /// ambiguous transport failure using the stable unit identity and generation.
 #[async_trait]
 pub trait RuntimeDriver: Send + Sync {
+    fn provider_id(&self) -> &ProviderId;
+
     async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities>;
 
     async fn apply(

@@ -1,4 +1,6 @@
-use super::{ArtifactRef, RuntimeOutputArtifact, RuntimeUnitClass, RuntimeUnitSpec};
+use super::{
+    ArtifactRef, IsolationLevel, RuntimeOutputArtifact, RuntimeUnitClass, RuntimeUnitSpec,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -117,7 +119,7 @@ pub struct RuntimeObservation {
 }
 
 impl RuntimeObservation {
-    pub const SCHEMA: &'static str = "a3s.runtime.observation.v1";
+    pub const SCHEMA: &'static str = "a3s.runtime.observation.v2";
 
     pub(crate) fn accepted(spec: &RuntimeUnitSpec, observed_at_ms: u64) -> Result<Self, String> {
         Ok(Self {
@@ -227,6 +229,40 @@ impl RuntimeObservation {
         {
             return Err("Runtime observation does not match the unit specification".into());
         }
+        if self.state == RuntimeUnitState::Succeeded {
+            if self.outputs.len() != spec.outputs.len() {
+                return Err("succeeded Task did not report the exact requested outputs".into());
+            }
+            for expected in &spec.outputs {
+                let output = self
+                    .outputs
+                    .iter()
+                    .find(|output| output.name == expected.name)
+                    .ok_or_else(|| format!("succeeded Task omitted output {:?}", expected.name))?;
+                if output.artifact.media_type != expected.media_type {
+                    return Err(format!(
+                        "output {:?} media type does not match its specification",
+                        expected.name
+                    ));
+                }
+                if output.size_bytes > expected.max_bytes {
+                    return Err(format!(
+                        "output {:?} exceeds its maximum size",
+                        expected.name
+                    ));
+                }
+            }
+        } else if !self.outputs.is_empty() {
+            return Err("only a succeeded Task may report outputs".into());
+        }
+        if spec.isolation == IsolationLevel::Confidential
+            && self.provider_resource_id.is_some()
+            && self.provider_attestation.is_none()
+        {
+            return Err(
+                "provider-backed confidential Runtime observation requires attestation".into(),
+            );
+        }
         Ok(())
     }
 
@@ -252,22 +288,34 @@ impl RuntimeObservation {
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeInspection {
     Found {
+        schema: String,
         observation: Box<RuntimeObservation>,
     },
     NotFound {
+        schema: String,
         unit_id: String,
         last_generation: Option<u64>,
     },
 }
 
 impl RuntimeInspection {
+    pub const SCHEMA: &'static str = "a3s.runtime.inspection.v1";
+
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Found { observation } => observation.validate(),
+            Self::Found {
+                schema,
+                observation,
+            } => {
+                validate_inspection_schema(schema)?;
+                observation.validate()
+            }
             Self::NotFound {
+                schema,
                 unit_id,
                 last_generation,
             } => {
+                validate_inspection_schema(schema)?;
                 super::validate_id("unit_id", unit_id, 512)?;
                 if *last_generation == Some(0) {
                     return Err("last_generation must be positive when present".into());
@@ -276,4 +324,11 @@ impl RuntimeInspection {
             }
         }
     }
+}
+
+fn validate_inspection_schema(schema: &str) -> Result<(), String> {
+    if schema != RuntimeInspection::SCHEMA {
+        return Err(format!("unsupported Runtime inspection schema {schema:?}"));
+    }
+    Ok(())
 }

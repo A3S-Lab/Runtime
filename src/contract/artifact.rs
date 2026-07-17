@@ -26,6 +26,7 @@ impl ArtifactRef {
 pub struct RuntimeOutputArtifact {
     pub name: String,
     pub artifact: ArtifactRef,
+    pub size_bytes: u64,
 }
 
 impl RuntimeOutputArtifact {

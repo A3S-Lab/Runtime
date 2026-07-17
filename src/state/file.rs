@@ -70,7 +70,10 @@ impl FileRuntimeStateStore {
             }
             let mut receipt =
                 RuntimeRequestReceipt::pending_apply(&request).map_err(RuntimeError::Protocol)?;
-            if record.observation.state != RuntimeUnitState::Accepted {
+            if !matches!(
+                record.observation.state,
+                RuntimeUnitState::Accepted | RuntimeUnitState::Unknown
+            ) {
                 receipt.complete_with_observation(record.observation.clone());
             }
             record.requests.insert(request.request_id.clone(), receipt);
@@ -352,7 +355,8 @@ pub(crate) fn validate_transition(
         .map_err(RuntimeError::Protocol)?;
     next.validate_against(spec)
         .map_err(RuntimeError::Protocol)?;
-    if current.provider_resource_id.is_some()
+    if current.state != RuntimeUnitState::Unknown
+        && current.provider_resource_id.is_some()
         && current.provider_resource_id != next.provider_resource_id
     {
         return Err(RuntimeError::Protocol(

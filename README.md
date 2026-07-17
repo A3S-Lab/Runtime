@@ -195,6 +195,9 @@ stop replay, removal replay, and generation-aware absence for both lifecycle
 classes. Provider repositories remain responsible for crash injection,
 reconstruction, provider-specific security, and resource-leak tests.
 
+See the [deep test plan](docs/deep-test-plan.md) for the full contract,
+durability, real-provider, fault, performance, soak, and A3S OS release gates.
+
 ## Architecture
 
 The contract and managed lifecycle are intentionally independent of product and
@@ -213,8 +216,11 @@ managed durability and validation
 provider driver and external runtime
 ```
 
-See [ADR 0001](docs/adr/0001-general-runtime-contract.md) for the ownership,
-identity, retry, and migration decisions behind the contract.
+See [ADR 0001](docs/adr/0001-general-runtime-contract.md) for the general
+ownership model, [ADR 0002](docs/adr/0002-complete-protocol-and-operation-semantics.md)
+for the completed protocol and operation semantics, and the
+[implementation plan](docs/implementation-plan.md) for the dependency-ordered
+delivery tasks.
 
 ## Development
 

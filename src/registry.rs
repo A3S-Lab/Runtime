@@ -1,12 +1,14 @@
 use crate::{ProviderId, RuntimeClient, RuntimeError, RuntimeResult};
+use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Typed construction boundary for one Runtime provider implementation.
+#[async_trait]
 pub trait RuntimeProviderFactory: Send + Sync {
     fn provider_id(&self) -> &ProviderId;
 
-    fn create(&self) -> RuntimeResult<Arc<dyn RuntimeClient>>;
+    async fn create(&self) -> RuntimeResult<Arc<dyn RuntimeClient>>;
 }
 
 /// Registry of provider factories. Selection policy belongs to the caller;
@@ -36,8 +38,9 @@ impl RuntimeClientRegistry {
         self.factories.contains_key(provider)
     }
 
-    pub fn connect(&self, provider: &ProviderId) -> RuntimeResult<Arc<dyn RuntimeClient>> {
-        self.factories
+    pub async fn connect(&self, provider: &ProviderId) -> RuntimeResult<Arc<dyn RuntimeClient>> {
+        let client = self
+            .factories
             .get(provider)
             .ok_or_else(|| {
                 RuntimeError::ProviderUnavailable(format!(
@@ -46,5 +49,16 @@ impl RuntimeClientRegistry {
                 ))
             })?
             .create()
+            .await?;
+        let capabilities = client.capabilities().await?;
+        capabilities.validate().map_err(RuntimeError::Protocol)?;
+        if &capabilities.provider_id != provider {
+            return Err(RuntimeError::Protocol(format!(
+                "Runtime provider factory {:?} created client reporting {:?}",
+                provider.as_str(),
+                capabilities.provider_id.as_str()
+            )));
+        }
+        Ok(client)
     }
 }

@@ -3,9 +3,9 @@ use a3s_runtime::contract::{
     ResourceControl, ResourceLimits, RestartPolicy, RuntimeActionRequest, RuntimeApplyRequest,
     RuntimeCapabilities, RuntimeExecRequest, RuntimeExecResult, RuntimeFeature, RuntimeHealthCheck,
     RuntimeHealthObservation, RuntimeHealthState, RuntimeInspection, RuntimeLogChunk,
-    RuntimeLogQuery, RuntimeLogStream, RuntimeNetworkSpec, RuntimeObservation, RuntimePort,
-    RuntimeProcessSpec, RuntimeRemoval, RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState,
-    TransportProtocol,
+    RuntimeLogQuery, RuntimeLogStream, RuntimeNetworkSpec, RuntimeObservation,
+    RuntimeOutputArtifact, RuntimeOutputSpec, RuntimePort, RuntimeProcessSpec, RuntimeRemoval,
+    RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState, TransportProtocol,
 };
 use a3s_runtime::{
     verify_runtime_provider, FileRuntimeStateStore, ManagedRuntimeClient, ProviderId,
@@ -30,29 +30,42 @@ impl RuntimeClock for FixedClock {
 }
 
 struct TestDriver {
+    provider: ProviderId,
     capabilities: RuntimeCapabilities,
     apply_calls: AtomicUsize,
     inspect_calls: AtomicUsize,
     stop_calls: AtomicUsize,
     remove_calls: AtomicUsize,
+    exec_calls: AtomicUsize,
     fail_next_apply: AtomicBool,
     missing_on_inspect: AtomicBool,
     substitute_identity: AtomicBool,
     unordered_logs: AtomicBool,
+    return_starting_on_apply: AtomicBool,
+    return_unknown_on_apply: AtomicBool,
+    return_running_on_stop: AtomicBool,
+    substitute_exec_spec: AtomicBool,
 }
 
 impl TestDriver {
     fn new() -> Self {
+        let provider = ProviderId::parse("test-runtime").unwrap();
         Self {
-            capabilities: capabilities(),
+            capabilities: capabilities(provider.clone()),
+            provider,
             apply_calls: AtomicUsize::new(0),
             inspect_calls: AtomicUsize::new(0),
             stop_calls: AtomicUsize::new(0),
             remove_calls: AtomicUsize::new(0),
+            exec_calls: AtomicUsize::new(0),
             fail_next_apply: AtomicBool::new(false),
             missing_on_inspect: AtomicBool::new(false),
             substitute_identity: AtomicBool::new(false),
             unordered_logs: AtomicBool::new(false),
+            return_starting_on_apply: AtomicBool::new(false),
+            return_unknown_on_apply: AtomicBool::new(false),
+            return_running_on_stop: AtomicBool::new(false),
+            substitute_exec_spec: AtomicBool::new(false),
         }
     }
 
@@ -68,6 +81,10 @@ impl TestDriver {
 
 #[async_trait]
 impl RuntimeDriver for TestDriver {
+    fn provider_id(&self) -> &ProviderId {
+        &self.provider
+    }
+
     async fn capabilities(&self) -> RuntimeResult<RuntimeCapabilities> {
         Ok(self.capabilities.clone())
     }
@@ -82,23 +99,55 @@ impl RuntimeDriver for TestDriver {
             return Err(RuntimeError::Transport("ambiguous apply".into()));
         }
         let mut observation = current.clone();
-        observation.state = match spec.class {
-            RuntimeUnitClass::Task => RuntimeUnitState::Succeeded,
-            RuntimeUnitClass::Service => RuntimeUnitState::Running,
+        observation.state = if self.return_unknown_on_apply.load(Ordering::SeqCst) {
+            RuntimeUnitState::Unknown
+        } else if self.return_starting_on_apply.load(Ordering::SeqCst) {
+            RuntimeUnitState::Starting
+        } else {
+            match spec.class {
+                RuntimeUnitClass::Task => RuntimeUnitState::Succeeded,
+                RuntimeUnitClass::Service => RuntimeUnitState::Running,
+            }
         };
         if self.substitute_identity.load(Ordering::SeqCst) {
             observation.unit_id = "substituted".into();
         }
-        observation.provider_resource_id = Some(format!("provider/{}", spec.unit_id));
-        observation.provider_build = Some("test-driver/1".into());
+        if observation.state != RuntimeUnitState::Unknown
+            || !self.return_unknown_on_apply.load(Ordering::SeqCst)
+        {
+            let provider_identity = if current.state == RuntimeUnitState::Unknown {
+                format!("provider/recovered/{}", spec.unit_id)
+            } else {
+                format!("provider/{}", spec.unit_id)
+            };
+            observation.provider_resource_id = Some(provider_identity);
+            observation.provider_build = Some("test-driver/1".into());
+        }
         observation.observed_at_ms = NOW + 1;
         observation.started_at_ms = Some(NOW);
-        observation.finished_at_ms = (spec.class == RuntimeUnitClass::Task).then_some(NOW + 1);
+        observation.finished_at_ms = observation.state.is_terminal().then_some(NOW + 1);
         observation.health = spec.health.as_ref().map(|_| RuntimeHealthObservation {
             state: RuntimeHealthState::Healthy,
             checked_at_ms: NOW + 1,
             message: None,
         });
+        observation.outputs = if observation.state == RuntimeUnitState::Succeeded {
+            spec.outputs
+                .iter()
+                .map(|expected| RuntimeOutputArtifact {
+                    name: expected.name.clone(),
+                    artifact: ArtifactRef {
+                        media_type: expected.media_type.clone(),
+                        ..artifact('b')
+                    },
+                    size_bytes: expected.max_bytes.min(4),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        observation.provider_attestation =
+            (spec.isolation == IsolationLevel::Confidential).then(|| artifact('c'));
         Ok(observation)
     }
 
@@ -106,6 +155,7 @@ impl RuntimeDriver for TestDriver {
         self.inspect_calls.fetch_add(1, Ordering::SeqCst);
         if self.missing_on_inspect.load(Ordering::SeqCst) {
             return Ok(RuntimeInspection::NotFound {
+                schema: RuntimeInspection::SCHEMA.into(),
                 unit_id: unit.spec.unit_id.clone(),
                 last_generation: Some(unit.spec.generation),
             });
@@ -113,6 +163,7 @@ impl RuntimeDriver for TestDriver {
         let mut observation = unit.observation.clone();
         observation.observed_at_ms += 1;
         Ok(RuntimeInspection::Found {
+            schema: RuntimeInspection::SCHEMA.into(),
             observation: Box::new(observation),
         })
     }
@@ -124,10 +175,19 @@ impl RuntimeDriver for TestDriver {
     ) -> RuntimeResult<RuntimeObservation> {
         self.stop_calls.fetch_add(1, Ordering::SeqCst);
         let mut observation = unit.observation.clone();
-        observation.state = RuntimeUnitState::Stopped;
+        observation.state = if self.return_running_on_stop.load(Ordering::SeqCst) {
+            RuntimeUnitState::Running
+        } else {
+            RuntimeUnitState::Stopped
+        };
         observation.observed_at_ms += 1;
-        observation.finished_at_ms = Some(observation.observed_at_ms);
-        observation.health = None;
+        observation.finished_at_ms = observation
+            .state
+            .is_terminal()
+            .then_some(observation.observed_at_ms);
+        if observation.state.is_terminal() {
+            observation.health = None;
+        }
         observation.outputs.clear();
         Ok(observation)
     }
@@ -160,6 +220,7 @@ impl RuntimeDriver for TestDriver {
         };
         Ok(vec![
             RuntimeLogChunk {
+                schema: RuntimeLogChunk::SCHEMA.into(),
                 cursor: "cursor-1".into(),
                 sequence: 1,
                 observed_at_ms: NOW,
@@ -167,6 +228,7 @@ impl RuntimeDriver for TestDriver {
                 data: "started\n".into(),
             },
             RuntimeLogChunk {
+                schema: RuntimeLogChunk::SCHEMA.into(),
                 cursor: "cursor-2".into(),
                 sequence: second_sequence,
                 observed_at_ms: NOW + 1,
@@ -181,9 +243,15 @@ impl RuntimeDriver for TestDriver {
         unit: &RuntimeUnitRecord,
         request: &RuntimeExecRequest,
     ) -> RuntimeResult<RuntimeExecResult> {
+        self.exec_calls.fetch_add(1, Ordering::SeqCst);
+        let mut observation = unit.observation.clone();
+        if self.substitute_exec_spec.load(Ordering::SeqCst) {
+            observation.spec_digest = digest('f');
+        }
         Ok(RuntimeExecResult {
+            schema: RuntimeExecResult::SCHEMA.into(),
             request_id: request.request_id.clone(),
-            observation: unit.observation.clone(),
+            observation,
             exit_code: 0,
             stdout: "ok\n".into(),
             stderr: String::new(),
@@ -212,7 +280,7 @@ fn resources(timeout: Option<u64>) -> ResourceLimits {
         cpu_millis: 500,
         memory_bytes: 128 * 1024 * 1024,
         pids: 128,
-        ephemeral_storage_bytes: 1024 * 1024 * 1024,
+        ephemeral_storage_bytes: Some(1024 * 1024 * 1024),
         execution_timeout_ms: timeout,
     }
 }
@@ -292,10 +360,10 @@ fn action(request_id: &str, unit_id: &str, generation: u64) -> RuntimeActionRequ
     }
 }
 
-fn capabilities() -> RuntimeCapabilities {
+fn capabilities(provider_id: ProviderId) -> RuntimeCapabilities {
     RuntimeCapabilities {
         schema: RuntimeCapabilities::SCHEMA.into(),
-        provider_id: "test-runtime".into(),
+        provider_id,
         provider_build: "test-driver/1".into(),
         unit_classes: vec![RuntimeUnitClass::Task, RuntimeUnitClass::Service],
         artifact_media_types: vec![IMAGE_MEDIA_TYPE.into()],
@@ -324,6 +392,7 @@ fn capabilities() -> RuntimeCapabilities {
             RuntimeFeature::Remove,
             RuntimeFeature::Logs,
             RuntimeFeature::Exec,
+            RuntimeFeature::OutputArtifacts,
         ],
     }
 }
@@ -423,7 +492,7 @@ async fn stop_remove_and_absence_are_durable_and_idempotent() {
     let first_stop = client.stop(&stop).await.unwrap();
     assert!(matches!(
         &first_stop,
-        RuntimeInspection::Found { observation }
+        RuntimeInspection::Found { observation, .. }
             if observation.state == RuntimeUnitState::Stopped
     ));
     assert_eq!(client.stop(&stop).await.unwrap(), first_stop);
@@ -444,6 +513,7 @@ async fn stop_remove_and_absence_are_durable_and_idempotent() {
     assert_eq!(
         client.inspect("service-lifecycle").await.unwrap(),
         RuntimeInspection::NotFound {
+            schema: RuntimeInspection::SCHEMA.into(),
             unit_id: "service-lifecycle".into(),
             last_generation: Some(1),
         }
@@ -470,6 +540,294 @@ async fn unsupported_capabilities_fail_before_state_or_provider_work() {
 }
 
 #[tokio::test]
+async fn optional_resource_controls_gate_only_workloads_that_request_them() {
+    let mut driver = TestDriver::new();
+    driver
+        .capabilities
+        .resource_controls
+        .retain(|control| *control != ResourceControl::EphemeralStorage);
+    let driver = Arc::new(driver);
+    let (client, store) = driver.client();
+
+    let mut without_quota = service("without-ephemeral-quota", 1);
+    without_quota.resources.ephemeral_storage_bytes = None;
+    client
+        .apply(&apply("without-ephemeral-quota", without_quota))
+        .await
+        .expect("unrelated workload must remain supported");
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 1);
+
+    assert!(matches!(
+        client
+            .apply(&apply(
+                "with-ephemeral-quota",
+                service("with-ephemeral-quota", 1),
+            ))
+            .await,
+        Err(RuntimeError::UnsupportedCapabilities(missing))
+            if missing == vec!["resource_control:EphemeralStorage"]
+    ));
+    assert!(matches!(
+        store.load("with-ephemeral-quota").await,
+        Err(RuntimeError::NotFound { .. })
+    ));
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn provider_identity_mismatch_fails_before_state_or_provider_work() {
+    let mut driver = TestDriver::new();
+    driver.capabilities.provider_id = ProviderId::parse("substituted-provider").unwrap();
+    let driver = Arc::new(driver);
+    let (client, store) = driver.client();
+
+    assert!(matches!(
+        client
+            .apply(&apply("provider-mismatch", service("provider-mismatch", 1)))
+            .await,
+        Err(RuntimeError::Protocol(message)) if message.contains("reported capabilities")
+    ));
+    assert!(matches!(
+        store.load("provider-mismatch").await,
+        Err(RuntimeError::NotFound { .. })
+    ));
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn output_and_confidential_capabilities_fail_closed_and_outputs_are_exact() {
+    let mut output_task = task("output-task", 1);
+    output_task.outputs = vec![RuntimeOutputSpec {
+        name: "result".into(),
+        path: "/outputs/result.json".into(),
+        media_type: "application/json".into(),
+        max_bytes: 16,
+    }];
+
+    let mut unsupported = TestDriver::new();
+    unsupported
+        .capabilities
+        .features
+        .retain(|feature| *feature != RuntimeFeature::OutputArtifacts);
+    let unsupported = Arc::new(unsupported);
+    let (client, store) = unsupported.client();
+    assert!(matches!(
+        client
+            .apply(&apply("output-unsupported", output_task.clone()))
+            .await,
+        Err(RuntimeError::UnsupportedCapabilities(missing))
+            if missing == vec!["feature:OutputArtifacts"]
+    ));
+    assert!(matches!(
+        store.load("output-task").await,
+        Err(RuntimeError::NotFound { .. })
+    ));
+
+    output_task.unit_id = "output-task-supported".into();
+    let supported = Arc::new(TestDriver::new());
+    let (client, _) = supported.client();
+    let observation = client
+        .apply(&apply("output-supported", output_task.clone()))
+        .await
+        .unwrap();
+    assert_eq!(observation.outputs.len(), 1);
+    assert_eq!(observation.outputs[0].name, "result");
+    assert!(observation.outputs[0].size_bytes <= 16);
+    let mut oversized = observation;
+    oversized.outputs[0].size_bytes = 17;
+    assert!(oversized.validate_against(&output_task).is_err());
+
+    let mut confidential_driver = TestDriver::new();
+    confidential_driver
+        .capabilities
+        .isolation_levels
+        .push(IsolationLevel::Confidential);
+    let confidential_driver = Arc::new(confidential_driver);
+    let (client, store) = confidential_driver.client();
+    let mut confidential = service("confidential-service", 1);
+    confidential.isolation = IsolationLevel::Confidential;
+    assert!(matches!(
+        client
+            .apply(&apply("confidential-unsupported", confidential))
+            .await,
+        Err(RuntimeError::UnsupportedCapabilities(missing))
+            if missing == vec!["feature:Attestation"]
+    ));
+    assert!(matches!(
+        store.load("confidential-service").await,
+        Err(RuntimeError::NotFound { .. })
+    ));
+
+    let mut supported_confidential = TestDriver::new();
+    supported_confidential
+        .capabilities
+        .isolation_levels
+        .push(IsolationLevel::Confidential);
+    supported_confidential
+        .capabilities
+        .features
+        .push(RuntimeFeature::Attestation);
+    let supported_confidential = Arc::new(supported_confidential);
+    let (client, _) = supported_confidential.client();
+    let mut confidential = service("confidential-supported", 1);
+    confidential.isolation = IsolationLevel::Confidential;
+    let observation = client
+        .apply(&apply("confidential-supported", confidential))
+        .await
+        .unwrap();
+    assert!(observation.provider_attestation.is_some());
+}
+
+#[tokio::test]
+async fn apply_stop_and_exec_postconditions_fail_closed() {
+    let driver = Arc::new(TestDriver::new());
+    driver
+        .return_starting_on_apply
+        .store(true, Ordering::SeqCst);
+    let (client, _) = driver.client();
+    let spec = service("postconditions", 1);
+    assert!(matches!(
+        client
+            .apply(&apply("postconditions-starting", spec.clone()))
+            .await,
+        Err(RuntimeError::Protocol(message)) if message.contains("invalid Service result")
+    ));
+
+    driver
+        .return_starting_on_apply
+        .store(false, Ordering::SeqCst);
+    client
+        .apply(&apply("postconditions-running", spec))
+        .await
+        .unwrap();
+    driver.return_running_on_stop.store(true, Ordering::SeqCst);
+    let stop = action("postconditions-stop", "postconditions", 1);
+    assert!(matches!(
+        client.stop(&stop).await,
+        Err(RuntimeError::Protocol(message)) if message.contains("nonterminal state")
+    ));
+
+    driver.return_running_on_stop.store(false, Ordering::SeqCst);
+    client.stop(&stop).await.unwrap();
+    assert!(matches!(
+        client
+            .exec(&RuntimeExecRequest {
+                schema: RuntimeExecRequest::SCHEMA.into(),
+                request_id: "exec-stopped".into(),
+                unit_id: "postconditions".into(),
+                generation: 1,
+                command: vec!["/bin/true".into()],
+                timeout_ms: 1_000,
+                deadline_at_ms: None,
+            })
+            .await,
+        Err(RuntimeError::InvalidRequest(message)) if message.contains("running unit")
+    ));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 0);
+
+    let unknown_driver = Arc::new(TestDriver::new());
+    unknown_driver
+        .return_unknown_on_apply
+        .store(true, Ordering::SeqCst);
+    let (unknown_client, _) = unknown_driver.client();
+    assert!(matches!(
+        unknown_client
+            .apply(&apply(
+                "postconditions-unknown",
+                service("postconditions-unknown", 1),
+            ))
+            .await,
+        Err(RuntimeError::Protocol(message))
+            if message.contains("without provider identity")
+    ));
+}
+
+#[tokio::test]
+async fn exec_result_must_bind_the_complete_unit_spec() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, _) = driver.client();
+    client
+        .apply(&apply("exec-binding-apply", service("exec-binding", 1)))
+        .await
+        .unwrap();
+    driver.substitute_exec_spec.store(true, Ordering::SeqCst);
+
+    assert!(matches!(
+        client
+            .exec(&RuntimeExecRequest {
+                schema: RuntimeExecRequest::SCHEMA.into(),
+                request_id: "exec-binding-request".into(),
+                unit_id: "exec-binding".into(),
+                generation: 1,
+                command: vec!["/bin/true".into()],
+                timeout_ms: 1_000,
+                deadline_at_ms: None,
+            })
+            .await,
+        Err(RuntimeError::Protocol(message))
+            if message.contains("does not match the unit specification")
+    ));
+}
+
+#[test]
+fn top_level_log_exec_and_inspection_records_require_current_schemas() {
+    let mut query = RuntimeLogQuery {
+        schema: RuntimeLogQuery::SCHEMA.into(),
+        unit_id: "schema-unit".into(),
+        generation: 1,
+        cursor: None,
+        limit: 1,
+        stream: None,
+    };
+    query.validate().unwrap();
+    query.schema = "a3s.runtime.log-query.v0".into();
+    assert!(query.validate().is_err());
+
+    let mut chunk = RuntimeLogChunk {
+        schema: RuntimeLogChunk::SCHEMA.into(),
+        cursor: "cursor".into(),
+        sequence: 1,
+        observed_at_ms: NOW,
+        stream: RuntimeLogStream::Stdout,
+        data: String::new(),
+    };
+    chunk.validate().unwrap();
+    chunk.schema.clear();
+    assert!(chunk.validate().is_err());
+
+    let mut exec = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "schema-exec".into(),
+        unit_id: "schema-unit".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 1,
+        deadline_at_ms: None,
+    };
+    exec.validate().unwrap();
+    exec.schema = "future".into();
+    assert!(exec.validate().is_err());
+
+    let inspection = RuntimeInspection::NotFound {
+        schema: "future".into(),
+        unit_id: "schema-unit".into(),
+        last_generation: None,
+    };
+    assert!(inspection.validate().is_err());
+
+    assert!(
+        serde_json::from_value::<RuntimeLogQuery>(serde_json::json!({
+            "unit_id": "schema-unit",
+            "generation": 1,
+            "cursor": null,
+            "limit": 1,
+            "stream": null
+        }))
+        .is_err()
+    );
+}
+
+#[tokio::test]
 async fn provider_identity_substitution_and_unordered_logs_are_rejected() {
     let driver = Arc::new(TestDriver::new());
     driver.substitute_identity.store(true, Ordering::SeqCst);
@@ -490,6 +848,7 @@ async fn provider_identity_substitution_and_unordered_logs_are_rejected() {
     assert!(matches!(
         client
             .logs(&RuntimeLogQuery {
+                schema: RuntimeLogQuery::SCHEMA.into(),
                 unit_id: "identity-service".into(),
                 generation: 1,
                 cursor: None,
@@ -511,6 +870,7 @@ async fn log_and_exec_capabilities_use_the_active_generation() {
         .unwrap();
     let logs = client
         .logs(&RuntimeLogQuery {
+            schema: RuntimeLogQuery::SCHEMA.into(),
             unit_id: "service-tools".into(),
             generation: 1,
             cursor: None,
@@ -523,11 +883,13 @@ async fn log_and_exec_capabilities_use_the_active_generation() {
 
     let result = client
         .exec(&RuntimeExecRequest {
+            schema: RuntimeExecRequest::SCHEMA.into(),
             request_id: "exec-tools".into(),
             unit_id: "service-tools".into(),
             generation: 1,
             command: vec!["/bin/true".into()],
             timeout_ms: 1_000,
+            deadline_at_ms: None,
         })
         .await
         .unwrap();
@@ -536,6 +898,7 @@ async fn log_and_exec_capabilities_use_the_active_generation() {
     assert!(matches!(
         client
             .logs(&RuntimeLogQuery {
+                schema: RuntimeLogQuery::SCHEMA.into(),
                 unit_id: "service-tools".into(),
                 generation: 2,
                 cursor: None,
@@ -574,7 +937,7 @@ async fn provider_loss_becomes_a_durable_unknown_observation() {
     driver.missing_on_inspect.store(true, Ordering::SeqCst);
 
     let inspection = client.inspect("service-loss").await.unwrap();
-    let RuntimeInspection::Found { observation } = inspection else {
+    let RuntimeInspection::Found { observation, .. } = inspection else {
         panic!("a previously observed provider unit must not become definitively absent");
     };
     assert_eq!(observation.state, RuntimeUnitState::Unknown);
@@ -586,6 +949,39 @@ async fn provider_loss_becomes_a_durable_unknown_observation() {
     assert_eq!(
         store.load("service-loss").await.unwrap().observation,
         *observation
+    );
+}
+
+#[tokio::test]
+async fn same_generation_apply_recovers_a_lost_provider_unit_once() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, store) = driver.client();
+    let spec = service("service-recovery", 1);
+    let running = client
+        .apply(&apply("apply-recovery", spec.clone()))
+        .await
+        .unwrap();
+
+    driver.missing_on_inspect.store(true, Ordering::SeqCst);
+    let RuntimeInspection::Found { observation, .. } =
+        client.inspect("service-recovery").await.unwrap()
+    else {
+        panic!("provider loss must first become a durable unknown observation");
+    };
+    assert_eq!(observation.state, RuntimeUnitState::Unknown);
+
+    driver.missing_on_inspect.store(false, Ordering::SeqCst);
+    let recovery = apply("reapply-recovery", spec);
+    let recovered = client.apply(&recovery).await.unwrap();
+    assert_eq!(recovered.state, RuntimeUnitState::Running);
+    assert_ne!(recovered.provider_resource_id, running.provider_resource_id);
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 2);
+
+    assert_eq!(client.apply(&recovery).await.unwrap(), recovered);
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        store.load("service-recovery").await.unwrap().observation,
+        recovered
     );
 }
 
@@ -643,20 +1039,24 @@ struct CountingFactory {
     client: Arc<dyn RuntimeClient>,
 }
 
+#[async_trait]
 impl RuntimeProviderFactory for CountingFactory {
     fn provider_id(&self) -> &ProviderId {
         &self.provider
     }
 
-    fn create(&self) -> RuntimeResult<Arc<dyn RuntimeClient>> {
+    async fn create(&self) -> RuntimeResult<Arc<dyn RuntimeClient>> {
         self.creates.fetch_add(1, Ordering::SeqCst);
         Ok(self.client.clone())
     }
 }
 
-#[test]
-fn provider_registry_never_falls_back_or_replaces_a_factory() {
-    let driver = Arc::new(TestDriver::new());
+#[tokio::test]
+async fn provider_registry_never_falls_back_or_replaces_a_factory() {
+    let mut driver = TestDriver::new();
+    driver.provider = ProviderId::parse("explicit-provider").unwrap();
+    driver.capabilities.provider_id = driver.provider.clone();
+    let driver = Arc::new(driver);
     let (client, _) = driver.client();
     let factory = Arc::new(CountingFactory {
         provider: ProviderId::parse("explicit-provider").unwrap(),
@@ -668,14 +1068,33 @@ fn provider_registry_never_falls_back_or_replaces_a_factory() {
 
     let missing = ProviderId::parse("missing-provider").unwrap();
     assert!(matches!(
-        registry.connect(&missing),
+        registry.connect(&missing).await,
         Err(RuntimeError::ProviderUnavailable(_))
     ));
     assert_eq!(factory.creates.load(Ordering::SeqCst), 0);
     assert!(registry.register(factory.clone()).is_err());
     assert_eq!(factory.creates.load(Ordering::SeqCst), 0);
 
-    registry.connect(factory.provider_id()).unwrap();
+    registry.connect(factory.provider_id()).await.unwrap();
+    assert_eq!(factory.creates.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn provider_registry_rejects_a_factory_client_identity_mismatch() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, _) = driver.client();
+    let factory = Arc::new(CountingFactory {
+        provider: ProviderId::parse("registered-provider").unwrap(),
+        creates: AtomicUsize::new(0),
+        client: Arc::new(client),
+    });
+    let mut registry = RuntimeClientRegistry::new();
+    registry.register(factory.clone()).unwrap();
+
+    assert!(matches!(
+        registry.connect(factory.provider_id()).await,
+        Err(RuntimeError::Protocol(message)) if message.contains("created client reporting")
+    ));
     assert_eq!(factory.creates.load(Ordering::SeqCst), 1);
 }
 

@@ -61,6 +61,7 @@ struct TestDriver {
     remove_calls: AtomicUsize,
     exec_calls: AtomicUsize,
     exec_effects: Mutex<BTreeMap<String, RuntimeExecResult>>,
+    last_exec_request: Mutex<Option<RuntimeExecRequest>>,
     exec_stdout_bytes: AtomicUsize,
     exec_truncated: AtomicBool,
     fail_next_apply: AtomicBool,
@@ -90,6 +91,7 @@ impl TestDriver {
             remove_calls: AtomicUsize::new(0),
             exec_calls: AtomicUsize::new(0),
             exec_effects: Mutex::new(BTreeMap::new()),
+            last_exec_request: Mutex::new(None),
             exec_stdout_bytes: AtomicUsize::new(0),
             exec_truncated: AtomicBool::new(false),
             fail_next_apply: AtomicBool::new(false),
@@ -495,6 +497,7 @@ impl RuntimeDriver for TestDriver {
         request: &RuntimeExecRequest,
     ) -> RuntimeResult<RuntimeExecResult> {
         self.exec_calls.fetch_add(1, Ordering::SeqCst);
+        *self.last_exec_request.lock().unwrap() = Some(request.clone());
         if self.hang_exec.load(Ordering::SeqCst) {
             return std::future::pending::<RuntimeResult<RuntimeExecResult>>().await;
         }
@@ -1407,7 +1410,8 @@ async fn expired_pending_request_remains_pending_and_is_not_redispatched() {
     let clock = Arc::new(ManualClock::new(NOW));
     let client = ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
     let mut request = apply("pending-expiry", service("pending-expiry", 1));
-    request.deadline_at_ms = Some(NOW + 10);
+    let deadline = NOW + 1_000;
+    request.deadline_at_ms = Some(deadline);
     driver.hang_apply.store(true, Ordering::SeqCst);
 
     assert!(matches!(
@@ -1424,7 +1428,7 @@ async fn expired_pending_request_remains_pending_and_is_not_redispatched() {
         a3s_runtime::RuntimeRequestState::Pending
     );
 
-    clock.set(NOW + 10);
+    clock.set(deadline);
     driver.hang_apply.store(false, Ordering::SeqCst);
     assert!(matches!(
         client.apply(&request).await,
@@ -1834,6 +1838,65 @@ async fn exec_uses_the_smaller_relative_or_absolute_deadline() {
         Err(RuntimeError::DeadlineExceeded(_))
     ));
     assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn lc_exec_003_provider_receives_the_durable_effective_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(TestDriver::new());
+    let clock = Arc::new(ManualClock::new(NOW));
+    let client = ManagedRuntimeClient::with_clock(store, driver.clone(), clock.clone());
+    client
+        .apply(&apply(
+            "exec-provider-deadline-apply",
+            service("exec-provider-deadline", 1),
+        ))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-provider-deadline-request".into(),
+        unit_id: "exec-provider-deadline".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 1_000,
+        deadline_at_ms: None,
+    };
+    driver
+        .fail_next_exec_after_effect
+        .store(true, Ordering::SeqCst);
+
+    assert!(matches!(
+        client.exec(&request).await,
+        Err(RuntimeError::Transport(message)) if message.contains("ambiguous")
+    ));
+    assert_eq!(
+        driver
+            .last_exec_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .deadline_at_ms,
+        Some(NOW + 1_000)
+    );
+
+    clock.set(NOW + 200);
+    let replayed = client.exec(&request).await.unwrap();
+    assert_eq!(replayed.request_id, request.request_id);
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(driver.exec_effect_count(), 1);
+    assert_eq!(
+        driver
+            .last_exec_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .deadline_at_ms,
+        Some(NOW + 1_000)
+    );
 }
 
 #[tokio::test]

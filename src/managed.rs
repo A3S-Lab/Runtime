@@ -552,11 +552,13 @@ impl RuntimeClient for ManagedRuntimeClient {
         })?;
         let deadline_at_ms = Some(deadline_at_ms);
         self.check_deadline(deadline_at_ms)?;
+        let mut provider_request = request.clone();
+        provider_request.deadline_at_ms = deadline_at_ms;
         let result = self
             .bounded(
                 deadline_at_ms,
                 "provider exec",
-                self.driver.exec(&reservation.record, request),
+                self.driver.exec(&reservation.record, &provider_request),
             )
             .await?;
         result.validate().map_err(RuntimeError::Protocol)?;

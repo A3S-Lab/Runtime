@@ -16,7 +16,7 @@ use a3s_runtime::{
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -54,6 +54,7 @@ impl RuntimeClock for ManualClock {
 struct TestDriver {
     provider: ProviderId,
     capabilities: RuntimeCapabilities,
+    state_directories: Mutex<Vec<tempfile::TempDir>>,
     apply_calls: AtomicUsize,
     inspect_calls: AtomicUsize,
     stop_calls: AtomicUsize,
@@ -78,6 +79,7 @@ impl TestDriver {
         Self {
             capabilities: capabilities(provider.clone()),
             provider,
+            state_directories: Mutex::new(Vec::new()),
             apply_calls: AtomicUsize::new(0),
             inspect_calls: AtomicUsize::new(0),
             stop_calls: AtomicUsize::new(0),
@@ -99,7 +101,8 @@ impl TestDriver {
 
     fn client(self: &Arc<Self>) -> (ManagedRuntimeClient, Arc<FileRuntimeStateStore>) {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.keep();
+        let path = directory.path().to_path_buf();
+        self.state_directories.lock().unwrap().push(directory);
         let store = Arc::new(FileRuntimeStateStore::new(path));
         let client =
             ManagedRuntimeClient::with_clock(store.clone(), self.clone(), Arc::new(FixedClock));

@@ -1,5 +1,7 @@
 use super::{verify_runtime_base, RuntimeBaseConformanceCase, RuntimeBaseConformanceReport};
-use crate::contract::{RuntimeCapabilities, RuntimeFeature};
+use crate::contract::{
+    HealthCheckKind, MountKind, NetworkMode, ResourceControl, RuntimeCapabilities, RuntimeFeature,
+};
 use crate::{RuntimeClient, RuntimeError, RuntimeResult};
 use async_trait::async_trait;
 use std::collections::{BTreeMap, BTreeSet};
@@ -144,11 +146,12 @@ pub fn runtime_profile_requirements(
     profile: RuntimeConformanceProfile,
 ) -> RuntimeResult<RuntimeConformanceProfileRequirements> {
     capabilities.validate().map_err(RuntimeError::Protocol)?;
-    let mut case_ids = case_ids(profile)
+    let mut case_ids = base_case_ids(profile)
         .iter()
         .copied()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
+    extend_capability_case_ids(capabilities, profile, &mut case_ids);
     if profile == RuntimeConformanceProfile::Security
         && capabilities.supports_feature(RuntimeFeature::SecretReferences)
     {
@@ -158,6 +161,11 @@ pub fn runtime_profile_requirements(
         && capabilities.supports_feature(RuntimeFeature::Attestation)
     {
         case_ids.insert("EVIDENCE-ATTESTATION-VALIDITY".into());
+    }
+    if profile == RuntimeConformanceProfile::Evidence
+        && capabilities.supports_feature(RuntimeFeature::Usage)
+    {
+        case_ids.insert("EVIDENCE-USAGE-VALIDITY".into());
     }
     let capability_claims = capability_claims(capabilities, profile);
     Ok(RuntimeConformanceProfileRequirements {
@@ -301,7 +309,7 @@ fn base_evidence(
     })
 }
 
-fn case_ids(profile: RuntimeConformanceProfile) -> &'static [&'static str] {
+fn base_case_ids(profile: RuntimeConformanceProfile) -> &'static [&'static str] {
     match profile {
         RuntimeConformanceProfile::Base => &[
             "BASE-TASK-SUCCESS",
@@ -320,23 +328,127 @@ fn case_ids(profile: RuntimeConformanceProfile) -> &'static [&'static str] {
             "RECOVERY-SAME-GENERATION-REPLACEMENT",
             "RECOVERY-DUPLICATE-DETECTION",
         ],
+        RuntimeConformanceProfile::Networking => &[],
+        RuntimeConformanceProfile::Mounts => &["MOUNT-READ-ONLY", "MOUNT-CLEANUP"],
+        RuntimeConformanceProfile::Health => &[
+            "HEALTH-THRESHOLD-TRANSITION",
+            "HEALTH-PROBE-TIMEOUT",
+            "HEALTH-START-PERIOD",
+            "HEALTH-UNHEALTHY-EXIT",
+        ],
+        RuntimeConformanceProfile::Resources => &[],
+        RuntimeConformanceProfile::Logs => &[
+            "LOG-STREAM-FILTER",
+            "LOG-TOTAL-ORDER",
+            "LOG-CURSOR-RESUME",
+            "LOG-SAME-TIMESTAMP",
+            "LOG-LIMIT",
+            "LOG-ROTATION-GAP",
+            "LOG-RETENTION",
+            "LOG-LARGE-RECORD",
+        ],
+        RuntimeConformanceProfile::Exec => &[
+            "EXEC-STATE-POLICY",
+            "EXEC-TIMEOUT-REPLAY",
+            "EXEC-EXIT-CODE",
+            "EXEC-OUTPUT-BOUNDS",
+            "EXEC-OUTPUT-TRUNCATION",
+            "EXEC-IDENTITY-GENERATION-BINDING",
+        ],
+        RuntimeConformanceProfile::Security => &[
+            "SECURITY-DIGEST-PINNING",
+            "SECURITY-METADATA-TAMPER",
+            "SECURITY-NAMESPACE-SEPARATION",
+            "SECURITY-LEAST-PRIVILEGE",
+            "SECURITY-HOSTILE-INPUT",
+        ],
+        RuntimeConformanceProfile::Outputs => &["OUTPUT-EXACT-BOUNDED", "OUTPUT-DIGEST-BINDING"],
+        RuntimeConformanceProfile::Evidence => &[
+            "EVIDENCE-SPEC-BINDING",
+            "EVIDENCE-SEMANTICS-PROFILE-BINDING",
+        ],
+    }
+}
+
+fn extend_capability_case_ids(
+    capabilities: &RuntimeCapabilities,
+    profile: RuntimeConformanceProfile,
+    case_ids: &mut BTreeSet<String>,
+) {
+    match profile {
         RuntimeConformanceProfile::Networking => {
-            &["NETWORK-MODE-BEHAVIOR", "NETWORK-PORT-COLLISION"]
+            for mode in &capabilities.network_modes {
+                match mode {
+                    NetworkMode::None => {
+                        case_ids.insert("NETWORK-MODE-NONE".into());
+                        case_ids.insert("NETWORK-OUTBOUND-DENIED".into());
+                    }
+                    NetworkMode::Outbound => {
+                        case_ids.insert("NETWORK-MODE-OUTBOUND".into());
+                        case_ids.insert("NETWORK-OUTBOUND-ALLOWED".into());
+                    }
+                    NetworkMode::Service => {
+                        case_ids.insert("NETWORK-MODE-SERVICE".into());
+                        case_ids.insert("NETWORK-PROTOCOL-TCP".into());
+                        case_ids.insert("NETWORK-PROTOCOL-UDP".into());
+                        case_ids.insert("NETWORK-LOOPBACK-PUBLICATION".into());
+                        case_ids.insert("NETWORK-PORT-COLLISION".into());
+                    }
+                }
+            }
         }
-        RuntimeConformanceProfile::Mounts => &["MOUNT-BEHAVIOR", "MOUNT-ISOLATION-CLEANUP"],
+        RuntimeConformanceProfile::Mounts => {
+            for kind in &capabilities.mount_kinds {
+                case_ids.insert(
+                    match kind {
+                        MountKind::Artifact => "MOUNT-ARTIFACT-BEHAVIOR",
+                        MountKind::Volume => "MOUNT-VOLUME-PERSISTENCE",
+                        MountKind::Tmpfs => "MOUNT-TMPFS-ISOLATION",
+                    }
+                    .into(),
+                );
+            }
+        }
         RuntimeConformanceProfile::Health => {
-            &["HEALTH-PROBE-BEHAVIOR", "HEALTH-THRESHOLD-TRANSITION"]
+            for kind in &capabilities.health_check_kinds {
+                case_ids.insert(
+                    match kind {
+                        HealthCheckKind::Http => "HEALTH-PROBE-HTTP",
+                        HealthCheckKind::Tcp => "HEALTH-PROBE-TCP",
+                        HealthCheckKind::Command => "HEALTH-PROBE-COMMAND",
+                    }
+                    .into(),
+                );
+            }
         }
         RuntimeConformanceProfile::Resources => {
-            &["RESOURCE-PROVIDER-INSPECT", "RESOURCE-WORKLOAD-BEHAVIOR"]
+            for control in &capabilities.resource_controls {
+                let (configuration, behavior) = match control {
+                    ResourceControl::Cpu => ("RESOURCE-CPU-CONFIG", "RESOURCE-CPU-BEHAVIOR"),
+                    ResourceControl::Memory => {
+                        ("RESOURCE-MEMORY-CONFIG", "RESOURCE-MEMORY-BEHAVIOR")
+                    }
+                    ResourceControl::Pids => ("RESOURCE-PIDS-CONFIG", "RESOURCE-PIDS-BEHAVIOR"),
+                    ResourceControl::EphemeralStorage => (
+                        "RESOURCE-EPHEMERAL-STORAGE-CONFIG",
+                        "RESOURCE-EPHEMERAL-STORAGE-BEHAVIOR",
+                    ),
+                    ResourceControl::ExecutionTimeout => (
+                        "RESOURCE-EXECUTION-TIMEOUT-CONFIG",
+                        "RESOURCE-EXECUTION-TIMEOUT-BEHAVIOR",
+                    ),
+                };
+                case_ids.insert(configuration.into());
+                case_ids.insert(behavior.into());
+            }
         }
-        RuntimeConformanceProfile::Logs => &["LOG-ORDER-FILTER", "LOG-CURSOR-RETENTION"],
-        RuntimeConformanceProfile::Exec => &["EXEC-STATE-BINDING", "EXEC-TIMEOUT-REPLAY"],
-        RuntimeConformanceProfile::Security => {
-            &["SECURITY-DIGEST-NAMESPACE", "SECURITY-METADATA-TAMPER"]
-        }
-        RuntimeConformanceProfile::Outputs => &["OUTPUT-EXACT-BOUNDED", "OUTPUT-DIGEST-BINDING"],
-        RuntimeConformanceProfile::Evidence => &["EVIDENCE-SPEC-BINDING"],
+        RuntimeConformanceProfile::Base
+        | RuntimeConformanceProfile::Recovery
+        | RuntimeConformanceProfile::Logs
+        | RuntimeConformanceProfile::Exec
+        | RuntimeConformanceProfile::Security
+        | RuntimeConformanceProfile::Outputs
+        | RuntimeConformanceProfile::Evidence => {}
     }
 }
 

@@ -2,9 +2,9 @@
 mod driver;
 
 use a3s_runtime::contract::{
-    ArtifactRef, HealthCheckKind, IsolationLevel, MountKind, NetworkMode, ResourceLimits,
-    RestartPolicy, RuntimeActionRequest, RuntimeApplyRequest, RuntimeFeature, RuntimeNetworkSpec,
-    RuntimeProcessSpec, RuntimeUnitClass, RuntimeUnitSpec,
+    ArtifactRef, HealthCheckKind, IsolationLevel, MountKind, NetworkMode, ResourceControl,
+    ResourceLimits, RestartPolicy, RuntimeActionRequest, RuntimeApplyRequest, RuntimeFeature,
+    RuntimeNetworkSpec, RuntimeProcessSpec, RuntimeUnitClass, RuntimeUnitSpec,
 };
 use a3s_runtime::{
     required_runtime_profiles, runtime_profile_requirements, verify_runtime_profiles,
@@ -315,4 +315,110 @@ async fn conf_profile_004_all_advertised_optional_families_activate() {
             RuntimeConformanceProfile::Evidence,
         ])
     );
+}
+
+#[tokio::test]
+async fn conf_profile_005_requirements_expand_every_advertised_behavior() {
+    let provider = tempfile::tempdir().expect("requirements provider root");
+    let driver = ProcessRaceDriver::new(provider.path());
+    let mut capabilities = driver.capabilities().await.expect("driver capabilities");
+    capabilities.network_modes = vec![
+        NetworkMode::None,
+        NetworkMode::Outbound,
+        NetworkMode::Service,
+    ];
+    capabilities.mount_kinds = vec![MountKind::Volume, MountKind::Tmpfs];
+    capabilities.health_check_kinds = vec![
+        HealthCheckKind::Http,
+        HealthCheckKind::Tcp,
+        HealthCheckKind::Command,
+    ];
+    capabilities.resource_controls = vec![
+        ResourceControl::Cpu,
+        ResourceControl::Memory,
+        ResourceControl::Pids,
+        ResourceControl::ExecutionTimeout,
+    ];
+    capabilities.features.extend([
+        RuntimeFeature::Logs,
+        RuntimeFeature::Usage,
+        RuntimeFeature::Attestation,
+    ]);
+
+    let networking =
+        runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Networking)
+            .expect("networking requirements");
+    assert_eq!(
+        networking.case_ids,
+        BTreeSet::from([
+            "NETWORK-LOOPBACK-PUBLICATION".into(),
+            "NETWORK-MODE-NONE".into(),
+            "NETWORK-MODE-OUTBOUND".into(),
+            "NETWORK-MODE-SERVICE".into(),
+            "NETWORK-OUTBOUND-ALLOWED".into(),
+            "NETWORK-OUTBOUND-DENIED".into(),
+            "NETWORK-PORT-COLLISION".into(),
+            "NETWORK-PROTOCOL-TCP".into(),
+            "NETWORK-PROTOCOL-UDP".into(),
+        ])
+    );
+
+    let mounts = runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Mounts)
+        .expect("mount requirements");
+    assert_eq!(
+        mounts.case_ids,
+        BTreeSet::from([
+            "MOUNT-CLEANUP".into(),
+            "MOUNT-READ-ONLY".into(),
+            "MOUNT-TMPFS-ISOLATION".into(),
+            "MOUNT-VOLUME-PERSISTENCE".into(),
+        ])
+    );
+
+    let health = runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Health)
+        .expect("health requirements");
+    assert_eq!(
+        health.case_ids,
+        BTreeSet::from([
+            "HEALTH-PROBE-COMMAND".into(),
+            "HEALTH-PROBE-HTTP".into(),
+            "HEALTH-PROBE-TCP".into(),
+            "HEALTH-PROBE-TIMEOUT".into(),
+            "HEALTH-START-PERIOD".into(),
+            "HEALTH-THRESHOLD-TRANSITION".into(),
+            "HEALTH-UNHEALTHY-EXIT".into(),
+        ])
+    );
+
+    let resources =
+        runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Resources)
+            .expect("resource requirements");
+    assert_eq!(resources.case_ids.len(), 8);
+    for required in [
+        "RESOURCE-CPU-CONFIG",
+        "RESOURCE-CPU-BEHAVIOR",
+        "RESOURCE-MEMORY-CONFIG",
+        "RESOURCE-MEMORY-BEHAVIOR",
+        "RESOURCE-PIDS-CONFIG",
+        "RESOURCE-PIDS-BEHAVIOR",
+        "RESOURCE-EXECUTION-TIMEOUT-CONFIG",
+        "RESOURCE-EXECUTION-TIMEOUT-BEHAVIOR",
+    ] {
+        assert!(resources.case_ids.contains(required));
+    }
+
+    let logs = runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Logs)
+        .expect("log requirements");
+    assert_eq!(logs.case_ids.len(), 8);
+    assert!(logs.case_ids.contains("LOG-SAME-TIMESTAMP"));
+    assert!(logs.case_ids.contains("LOG-ROTATION-GAP"));
+    assert!(logs.case_ids.contains("LOG-LARGE-RECORD"));
+
+    let evidence = runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Evidence)
+        .expect("evidence requirements");
+    assert!(evidence.case_ids.contains("EVIDENCE-USAGE-VALIDITY"));
+    assert!(evidence.case_ids.contains("EVIDENCE-ATTESTATION-VALIDITY"));
+    assert!(evidence
+        .case_ids
+        .contains("EVIDENCE-SEMANTICS-PROFILE-BINDING"));
 }

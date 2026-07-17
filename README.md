@@ -203,6 +203,15 @@ stable case IDs and capability claims for every activated profile, perform
 cleanup even after a failed profile, and prove that its canonical provider
 inventory returned to the pre-run baseline.
 
+Profile requirements expand to one case ID per advertised behavior rather than
+accepting a generic family-level claim. For example, every reported network
+mode, mount kind, health probe, and resource control activates its own
+configuration and behavioral cases. `NetworkMode::Service` activates both TCP
+and UDP because the current protocol has no narrower transport-protocol
+capability. Logs separately require filtering, total order, cursor resume,
+same-timestamp handling, limits, explicit rotation gaps, terminal retention,
+and bounded large records.
+
 `verify_runtime_provider` remains available as the lower-level successful Task
 and Service lifecycle check. It is not, by itself, production certification.
 Provider-specific fixtures still own real daemon restart, external deletion,

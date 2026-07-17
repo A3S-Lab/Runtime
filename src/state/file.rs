@@ -1,3 +1,5 @@
+#[cfg(test)]
+use self::fs::test_failpoint;
 use self::fs::{
     atomic_write, ensure_directory, io_error, owner_only_open, path_exists, read_optional_receipt,
     read_optional_record, read_required_receipt, read_required_record,
@@ -15,7 +17,7 @@ use async_trait::async_trait;
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod fs;
 

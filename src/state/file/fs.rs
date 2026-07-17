@@ -312,6 +312,6 @@ pub(super) fn io_error(action: &'static str) -> impl FnOnce(std::io::Error) -> R
 }
 
 #[cfg(test)]
-fn test_failpoint(name: &str) {
+pub(super) fn test_failpoint(name: &str) {
     super::tests::hit_failpoint(name);
 }

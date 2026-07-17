@@ -226,7 +226,7 @@ pub struct RuntimeUnitSpec {
 }
 
 impl RuntimeUnitSpec {
-    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v1";
+    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v2";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {

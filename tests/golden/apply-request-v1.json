@@ -1,0 +1,42 @@
+{
+  "schema": "a3s.runtime.apply-request.v1",
+  "request_id": "golden-apply",
+  "deadline_at_ms": 200000,
+  "spec": {
+    "schema": "a3s.runtime.unit-spec.v2",
+    "unit_id": "golden-task",
+    "generation": 7,
+    "class": "task",
+    "artifact": {
+      "uri": "oci://registry.example/a3s/golden@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "media_type": "application/vnd.oci.image.manifest.v1+json"
+    },
+    "process": {
+      "command": [],
+      "args": [],
+      "working_directory": null,
+      "environment": {}
+    },
+    "mounts": [],
+    "secrets": [],
+    "network": {
+      "mode": "outbound",
+      "ports": []
+    },
+    "resources": {
+      "cpu_millis": 500,
+      "memory_bytes": 134217728,
+      "pids": 128,
+      "ephemeral_storage_bytes": null,
+      "execution_timeout_ms": 60000
+    },
+    "isolation": "container",
+    "health": null,
+    "restart": {
+      "kind": "never"
+    },
+    "outputs": [],
+    "semantics_profile_digest": null
+  }
+}

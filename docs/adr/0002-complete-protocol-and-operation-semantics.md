@@ -44,7 +44,10 @@ fields:
 - durable unit records and request receipts.
 
 Nested value objects remain versioned by their enclosing top-level schema.
-Adding `size_bytes` to output artifacts changes observations to
+Making `ephemeral_storage_bytes` optional changes unit specifications to
+`a3s.runtime.unit-spec.v2`; v1 required a numeric quota. An omitted quota is
+encoded explicitly as `null` in v2 and requires no ephemeral-storage
+capability. Adding `size_bytes` to output artifacts changes observations to
 `a3s.runtime.observation.v2`. Adding typed provider identity and output
 capability changes capabilities to `a3s.runtime.capabilities.v3`. The durable
 request-journal layout uses `a3s.runtime.unit-record.v2`.

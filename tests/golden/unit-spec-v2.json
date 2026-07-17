@@ -1,0 +1,97 @@
+{
+  "schema": "a3s.runtime.unit-spec.v2",
+  "unit_id": "golden-task",
+  "generation": 7,
+  "class": "task",
+  "artifact": {
+    "uri": "oci://registry.example/a3s/golden@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "media_type": "application/vnd.oci.image.manifest.v1+json"
+  },
+  "process": {
+    "command": ["/bin/sh"],
+    "args": ["-c", "echo ready"],
+    "working_directory": "/workspace",
+    "environment": {
+      "LANG": "C.UTF-8"
+    }
+  },
+  "mounts": [
+    {
+      "name": "source",
+      "source": {
+        "kind": "artifact",
+        "artifact": {
+          "uri": "artifact://source@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "media_type": "application/vnd.a3s.source.v1+tar"
+        }
+      },
+      "target": "/inputs/source",
+      "read_only": true
+    },
+    {
+      "name": "cache",
+      "source": {
+        "kind": "volume",
+        "volume_id": "cache-volume"
+      },
+      "target": "/cache",
+      "read_only": false
+    },
+    {
+      "name": "scratch",
+      "source": {
+        "kind": "tmpfs",
+        "size_bytes": 1048576
+      },
+      "target": "/tmp",
+      "read_only": false
+    }
+  ],
+  "secrets": [
+    {
+      "name": "api token",
+      "reference": "secret://runtime/api-token",
+      "target": {
+        "kind": "environment",
+        "variable": "API_TOKEN"
+      }
+    },
+    {
+      "name": "certificate",
+      "reference": "secret://runtime/certificate",
+      "target": {
+        "kind": "file",
+        "path": "/run/secrets/cert.pem",
+        "mode": 384
+      }
+    }
+  ],
+  "network": {
+    "mode": "outbound",
+    "ports": []
+  },
+  "resources": {
+    "cpu_millis": 500,
+    "memory_bytes": 134217728,
+    "pids": 128,
+    "ephemeral_storage_bytes": null,
+    "execution_timeout_ms": 60000
+  },
+  "isolation": "sandbox",
+  "health": null,
+  "restart": {
+    "kind": "on_failure",
+    "max_retries": 2
+  },
+  "outputs": [
+    {
+      "name": "result",
+      "path": "/outputs/result.json",
+      "media_type": "application/json",
+      "max_bytes": 4096
+    }
+  ],
+  "semantics_profile_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}

@@ -82,6 +82,8 @@ A unit specification includes:
 - an optional digest binding caller-owned execution semantics.
 
 All wire records use explicit schema identifiers and reject unknown fields.
+`RuntimeUnitSpec` v2 makes the ephemeral-storage quota optional; a provider
+needs that resource control only when a specification requests the quota.
 Protocol validation occurs before state reservation or provider work.
 
 ### Observations
@@ -132,8 +134,12 @@ provider integration:
 
 ```text
 state root/
-├── locks/                   # per-unit cross-process locks
-└── units/                   # atomic JSON records and request receipts
+├── locks/                   # short per-unit record locks
+├── operations/              # full-operation cross-process leases
+└── units/
+    └── <unit-key>/
+        ├── record.json      # active unit record
+        └── requests/        # one durable receipt per request ID
 ```
 
 The store uses a SHA-256 storage key derived from the validated unit ID. Records

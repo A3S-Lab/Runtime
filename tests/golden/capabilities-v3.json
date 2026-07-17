@@ -1,0 +1,13 @@
+{
+  "schema": "a3s.runtime.capabilities.v3",
+  "provider_id": "golden-runtime",
+  "provider_build": "golden-runtime/1.2.3",
+  "unit_classes": ["task", "service"],
+  "artifact_media_types": ["application/vnd.oci.image.manifest.v1+json"],
+  "isolation_levels": ["process", "container", "sandbox", "confidential"],
+  "network_modes": ["none", "outbound", "service"],
+  "mount_kinds": ["artifact", "volume", "tmpfs"],
+  "health_check_kinds": ["http", "tcp", "command"],
+  "resource_controls": ["cpu", "memory", "pids", "ephemeral_storage", "execution_timeout"],
+  "features": ["durable_identity", "stop", "remove", "logs", "exec", "usage", "attestation", "secret_references", "output_artifacts"]
+}

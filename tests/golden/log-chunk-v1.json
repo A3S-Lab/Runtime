@@ -1,0 +1,8 @@
+{
+  "schema": "a3s.runtime.log-chunk.v1",
+  "cursor": "cursor-42",
+  "sequence": 42,
+  "observed_at_ms": 120000,
+  "stream": "stderr",
+  "data": "warning\n"
+}

@@ -19,6 +19,7 @@ const STOP_ID: &str = "receipt-first-stop";
 const REMOVE_ID: &str = "receipt-first-remove";
 const EXEC_ID: &str = "receipt-first-exec";
 const FAILPOINT_ENV: &str = "A3S_RUNTIME_TEST_FAILPOINT";
+const IO_FAULT_ENV: &str = "A3S_RUNTIME_TEST_IO_FAULT";
 const READY_ENV: &str = "A3S_RUNTIME_TEST_FAILPOINT_READY";
 const ROOT_ENV: &str = "A3S_RUNTIME_TEST_STATE_ROOT";
 const OPERATION_ENV: &str = "A3S_RUNTIME_TEST_COMPLETION_KIND";
@@ -34,6 +35,38 @@ pub(super) fn hit_failpoint(name: &str) {
     std::fs::write(ready, name).expect("publish test failpoint readiness");
     loop {
         thread::park_timeout(Duration::from_secs(60));
+    }
+}
+
+pub(super) fn inject_io_fault(point: &str) -> std::io::Result<()> {
+    let Ok(fault) = std::env::var(IO_FAULT_ENV) else {
+        return Ok(());
+    };
+    let Some(kind) = fault
+        .strip_prefix(point)
+        .and_then(|suffix| suffix.strip_prefix('.'))
+    else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        let raw_error = match kind {
+            "enospc" | "inode-exhaustion" => libc::ENOSPC,
+            "read-only" => libc::EROFS,
+            _ => return Ok(()),
+        };
+        Err(std::io::Error::from_raw_os_error(raw_error))
+    }
+
+    #[cfg(not(unix))]
+    {
+        match kind {
+            "enospc" | "inode-exhaustion" | "read-only" => Err(std::io::Error::other(format!(
+                "injected Runtime state I/O fault: {kind}"
+            ))),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -473,4 +506,211 @@ fn state_fs_002_corrupt_permission_and_non_regular_boundaries_fail_closed() {
         store.load_sync(UNIT_ID),
         Err(RuntimeError::Protocol(_))
     ));
+}
+
+fn spawn_atomic_crash_helper(root: &Path, ready: &Path, failpoint: &str) -> Child {
+    Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("subprocess_atomic_write_helper")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(ROOT_ENV, root)
+        .env(READY_ENV, ready)
+        .env(FAILPOINT_ENV, failpoint)
+        .spawn()
+        .expect("spawn atomic-write helper")
+}
+
+fn spawn_io_fault_helper(root: &Path, result: &Path, request_id: &str, fault: &str) -> Child {
+    Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("subprocess_atomic_io_fault_helper")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(ROOT_ENV, root)
+        .env(READY_ENV, result)
+        .env(OPERATION_ENV, request_id)
+        .env(IO_FAULT_ENV, fault)
+        .spawn()
+        .expect("spawn atomic I/O-fault helper")
+}
+
+fn wait_for_success(child: &mut Child, case_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().expect("inspect state helper") {
+            assert!(status.success(), "{case_id}: helper failed: {status}");
+            return;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill timed-out state helper");
+            child.wait().expect("wait for timed-out state helper");
+            panic!("{case_id}: helper timed out");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn staging_files(root: &Path) -> Vec<PathBuf> {
+    let mut directories = vec![root.to_path_buf()];
+    let mut staging = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).expect("scan state test directory") {
+            let entry = entry.expect("read state test entry");
+            let path = entry.path();
+            let file_type = entry.file_type().expect("inspect state test entry");
+            if file_type.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(".tmp")
+                || (name.starts_with(".a3s-runtime-") && name.ends_with(".tmp"))
+            {
+                staging.push(path);
+            }
+        }
+    }
+    staging.sort();
+    staging
+}
+
+#[test]
+fn subprocess_atomic_write_helper() {
+    let Ok(root) = std::env::var(ROOT_ENV) else {
+        return;
+    };
+    let store = FileRuntimeStateStore::new(PathBuf::from(root));
+    let mut record = store.load_sync(UNIT_ID).expect("load atomic-write unit");
+    record.observation.observed_at_ms = NOW + 2;
+    record
+        .validate()
+        .expect("validate atomic-write replacement");
+    let path = store.record_path(UNIT_ID, false).expect("record path");
+    atomic_write(&path, &record, "state record").expect("rewrite state record");
+}
+
+#[test]
+fn subprocess_atomic_io_fault_helper() {
+    let Ok(root) = std::env::var(ROOT_ENV) else {
+        return;
+    };
+    let request_id = std::env::var(OPERATION_ENV).expect("fault request ID");
+    let result = PathBuf::from(std::env::var(READY_ENV).expect("fault result path"));
+    let store = FileRuntimeStateStore::new(PathBuf::from(root));
+    match store.reserve_action_sync(RuntimeActionKind::Stop, action(&request_id), NOW + 2) {
+        Err(RuntimeError::Transport(error)) => {
+            std::fs::write(result, error).expect("write injected I/O result");
+        }
+        other => panic!("injected state I/O fault returned {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn state_crash_002_atomic_write_process_kills_preserve_a_complete_record() {
+    let cases = [
+        ("state.atomic-write.after-create", false),
+        ("state.atomic-write.after-partial-write", false),
+        ("state.atomic-write.after-complete-write", false),
+        ("state.atomic-write.after-file-sync", false),
+        ("state.atomic-write.after-permissions", false),
+        ("state.atomic-write.after-publish", true),
+        ("state.atomic-write.after-directory-sync", true),
+    ];
+
+    for (failpoint, published) in cases {
+        let directory = tempfile::tempdir().expect("atomic-write state root");
+        let store = FileRuntimeStateStore::new(directory.path());
+        prepare_running(&store);
+        let ready = directory.path().join(format!("{failpoint}.ready"));
+        let mut child = spawn_atomic_crash_helper(directory.path(), &ready, failpoint);
+        kill_at_failpoint(&mut child, &ready, failpoint);
+
+        let record = store.load_sync(UNIT_ID).expect("load post-crash record");
+        assert_eq!(
+            record.observation.observed_at_ms,
+            if published { NOW + 2 } else { NOW + 1 },
+            "{failpoint}: unexpected published state"
+        );
+        let staged = staging_files(directory.path());
+        if published {
+            assert!(
+                staged.is_empty(),
+                "{failpoint}: published state left a staging file: {staged:?}"
+            );
+        } else {
+            assert!(
+                !staged.is_empty(),
+                "{failpoint}: pre-publish crash did not leave a recoverable staging file"
+            );
+        }
+
+        let mut recovered = record;
+        recovered.observation.observed_at_ms = NOW + 3;
+        recovered.validate().expect("validate recovered record");
+        let path = store.record_path(UNIT_ID, false).expect("record path");
+        atomic_write(&path, &recovered, "state record").expect("recover atomic state write");
+        assert_eq!(
+            store
+                .load_sync(UNIT_ID)
+                .expect("load recovered state")
+                .observation
+                .observed_at_ms,
+            NOW + 3
+        );
+        assert!(
+            staging_files(directory.path()).is_empty(),
+            "{failpoint}: replay left a stale staging file"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn state_fs_003_storage_faults_preserve_prior_state_and_reject_dispatch() {
+    let cases = [
+        (
+            "STATE-FS-003-read-only",
+            "state.atomic-write.before-create.read-only",
+        ),
+        (
+            "STATE-FS-003-enospc",
+            "state.atomic-write.before-create.enospc",
+        ),
+        (
+            "STATE-FS-003-inode-exhaustion",
+            "state.atomic-write.before-create.inode-exhaustion",
+        ),
+    ];
+
+    for (index, (case_id, fault)) in cases.into_iter().enumerate() {
+        let directory = tempfile::tempdir().expect("storage-fault state root");
+        let store = FileRuntimeStateStore::new(directory.path());
+        let running = prepare_running(&store);
+        let request_id = format!("storage-fault-{index}");
+        let result = directory.path().join(format!("{request_id}.result"));
+        let mut child = spawn_io_fault_helper(directory.path(), &result, &request_id, fault);
+        wait_for_success(&mut child, case_id);
+
+        assert!(
+            result.is_file(),
+            "{case_id}: helper did not report the fault"
+        );
+        assert_eq!(
+            store
+                .load_sync(UNIT_ID)
+                .expect("load prior record")
+                .observation,
+            running,
+            "{case_id}: failed reservation changed the durable record"
+        );
+        assert!(matches!(
+            store.load_request_sync(UNIT_ID, &request_id),
+            Err(RuntimeError::RequestNotFound { .. })
+        ));
+        assert!(
+            staging_files(directory.path()).is_empty(),
+            "{case_id}: failed reservation left a staging file"
+        );
+    }
 }

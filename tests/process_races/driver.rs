@@ -1,8 +1,8 @@
 use a3s_runtime::contract::{
     IsolationLevel, NetworkMode, ResourceControl, RuntimeActionRequest, RuntimeCapabilities,
-    RuntimeExecRequest, RuntimeExecResult, RuntimeFeature, RuntimeInspection, RuntimeLogChunk,
-    RuntimeLogQuery, RuntimeObservation, RuntimeRemoval, RuntimeUnitClass, RuntimeUnitSpec,
-    RuntimeUnitState,
+    RuntimeExecRequest, RuntimeExecResult, RuntimeFailure, RuntimeFeature, RuntimeInspection,
+    RuntimeLogChunk, RuntimeLogQuery, RuntimeObservation, RuntimeRemoval, RuntimeUnitClass,
+    RuntimeUnitSpec, RuntimeUnitState,
 };
 use a3s_runtime::{ProviderId, RuntimeDriver, RuntimeError, RuntimeResult, RuntimeUnitRecord};
 use async_trait::async_trait;
@@ -97,20 +97,34 @@ impl ProcessRaceDriver {
                 .filter(|resource| resource.generation == spec.generation)
                 .collect::<Vec<_>>();
 
-            let mut resource = current_resources.first().map_or_else(
-                || ProviderResource {
+            let target_state = match spec.class {
+                RuntimeUnitClass::Task
+                    if spec
+                        .process
+                        .args
+                        .iter()
+                        .any(|argument| matches!(argument.as_str(), "fail" | "timeout")) =>
+                {
+                    RuntimeUnitState::Failed
+                }
+                RuntimeUnitClass::Task => RuntimeUnitState::Succeeded,
+                RuntimeUnitClass::Service => RuntimeUnitState::Running,
+            };
+            let mut resource = current_resources
+                .first()
+                .copied()
+                .cloned()
+                .unwrap_or_else(|| ProviderResource {
                     resource_id: format!("process/{}/g{}", spec.unit_id, spec.generation),
                     unit_id: spec.unit_id.clone(),
                     generation: spec.generation,
-                    state: RuntimeUnitState::Running,
+                    state: target_state,
                     observed_at_ms: current.observed_at_ms.saturating_add(1),
                     started_at_ms: current.observed_at_ms.saturating_add(1),
                     apply_dispatches: 0,
-                },
-                |resource| (*resource).clone(),
-            );
+                });
             resource.apply_dispatches = resource.apply_dispatches.saturating_add(1);
-            resource.state = RuntimeUnitState::Running;
+            resource.state = target_state;
             resource.observed_at_ms = resource
                 .observed_at_ms
                 .max(current.observed_at_ms.saturating_add(1));
@@ -231,7 +245,7 @@ impl RuntimeDriver for ProcessRaceDriver {
             schema: RuntimeCapabilities::SCHEMA.into(),
             provider_id: self.provider_id.clone(),
             provider_build: PROVIDER_BUILD.into(),
-            unit_classes: vec![RuntimeUnitClass::Service],
+            unit_classes: vec![RuntimeUnitClass::Task, RuntimeUnitClass::Service],
             artifact_media_types: vec![IMAGE_MEDIA_TYPE.into()],
             isolation_levels: vec![IsolationLevel::Container],
             network_modes: vec![NetworkMode::None],
@@ -241,6 +255,7 @@ impl RuntimeDriver for ProcessRaceDriver {
                 ResourceControl::Cpu,
                 ResourceControl::Memory,
                 ResourceControl::Pids,
+                ResourceControl::ExecutionTimeout,
             ],
             features: vec![
                 RuntimeFeature::DurableIdentity,
@@ -398,7 +413,11 @@ fn observation_from_resource(
         .then_some(observation.observed_at_ms);
     observation.health = None;
     observation.outputs.clear();
-    observation.failure = None;
+    observation.failure = (resource.state == RuntimeUnitState::Failed).then(|| RuntimeFailure {
+        code: "fixture_failure".into(),
+        message: "process-race fixture failed as requested".into(),
+        retryable: false,
+    });
     observation
 }
 

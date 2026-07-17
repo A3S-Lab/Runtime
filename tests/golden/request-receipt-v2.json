@@ -1,10 +1,11 @@
 {
-  "schema": "a3s.runtime.request-receipt.v1",
+  "schema": "a3s.runtime.request-receipt.v2",
   "request_id": "golden-exec",
   "unit_id": "golden-service",
   "generation": 3,
   "kind": "exec",
   "request_digest": "sha256:861f6cad44261c49a89b5cd12920ca3977d833b5c9143d748db945a08939bad0",
+  "deadline_at_ms": 200000,
   "state": "completed",
   "observation": null,
   "removal": null,

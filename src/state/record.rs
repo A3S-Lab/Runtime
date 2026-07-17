@@ -45,6 +45,12 @@ pub struct RuntimeRequestReceipt {
     pub generation: u64,
     pub kind: RuntimeRequestKind,
     pub request_digest: String,
+    /// Effective absolute deadline captured when the request was first reserved.
+    ///
+    /// Exec always has a deadline because its relative timeout is converted to
+    /// an absolute value. Persisting it prevents a pending replay from extending
+    /// the original execution budget.
+    pub deadline_at_ms: Option<u64>,
     pub state: RuntimeRequestState,
     pub observation: Option<RuntimeObservation>,
     pub removal: Option<RuntimeRemoval>,
@@ -52,7 +58,7 @@ pub struct RuntimeRequestReceipt {
 }
 
 impl RuntimeRequestReceipt {
-    pub const SCHEMA: &'static str = "a3s.runtime.request-receipt.v1";
+    pub const SCHEMA: &'static str = "a3s.runtime.request-receipt.v2";
 
     pub(crate) fn pending_apply(request: &RuntimeApplyRequest) -> Result<Self, String> {
         Ok(Self::pending(
@@ -61,6 +67,7 @@ impl RuntimeRequestReceipt {
             request.spec.generation,
             RuntimeRequestKind::Apply,
             request.digest()?,
+            request.deadline_at_ms,
         ))
     }
 
@@ -74,16 +81,27 @@ impl RuntimeRequestReceipt {
             request.generation,
             kind.into(),
             request.digest()?,
+            request.deadline_at_ms,
         ))
     }
 
-    pub(crate) fn pending_exec(request: &RuntimeExecRequest) -> Result<Self, String> {
+    pub(crate) fn pending_exec(
+        request: &RuntimeExecRequest,
+        started_at_ms: u64,
+    ) -> Result<Self, String> {
+        let relative_deadline = started_at_ms.saturating_add(request.timeout_ms);
+        let deadline_at_ms = request
+            .deadline_at_ms
+            .map_or(relative_deadline, |absolute| {
+                absolute.min(relative_deadline)
+            });
         Ok(Self::pending(
             request.request_id.clone(),
             request.unit_id.clone(),
             request.generation,
             RuntimeRequestKind::Exec,
             request.digest()?,
+            Some(deadline_at_ms),
         ))
     }
 
@@ -93,6 +111,7 @@ impl RuntimeRequestReceipt {
         generation: u64,
         kind: RuntimeRequestKind,
         request_digest: String,
+        deadline_at_ms: Option<u64>,
     ) -> Self {
         Self {
             schema: Self::SCHEMA.into(),
@@ -101,6 +120,7 @@ impl RuntimeRequestReceipt {
             generation,
             kind,
             request_digest,
+            deadline_at_ms,
             state: RuntimeRequestState::Pending,
             observation: None,
             removal: None,
@@ -140,6 +160,11 @@ impl RuntimeRequestReceipt {
         crate::contract::validate_id("unit_id", &self.unit_id, 512)?;
         if self.generation == 0 {
             return Err("Runtime request receipt generation must be positive".into());
+        }
+        if self.deadline_at_ms == Some(0)
+            || (self.kind == RuntimeRequestKind::Exec && self.deadline_at_ms.is_none())
+        {
+            return Err("Runtime request receipt deadline is invalid".into());
         }
         crate::contract::validate_digest(&self.request_digest)?;
         match (

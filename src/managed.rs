@@ -90,14 +90,14 @@ impl ManagedRuntimeClient {
             })?
     }
 
-    fn exec_deadline(&self, request: &RuntimeExecRequest) -> u64 {
-        let relative = self.clock.now_ms().saturating_add(request.timeout_ms);
+    fn exec_deadline(&self, request: &RuntimeExecRequest, started_at_ms: u64) -> u64 {
+        let relative = started_at_ms.saturating_add(request.timeout_ms);
         request
             .deadline_at_ms
             .map_or(relative, |absolute| absolute.min(relative))
     }
 
-    async fn completed_replay(
+    async fn matching_receipt(
         &self,
         unit_id: &str,
         generation: u64,
@@ -124,7 +124,21 @@ impl ManagedRuntimeClient {
                 request_id: request_id.into(),
             });
         }
-        Ok((receipt.state == RuntimeRequestState::Completed).then_some(receipt))
+        Ok(Some(receipt))
+    }
+
+    async fn completed_replay(
+        &self,
+        unit_id: &str,
+        generation: u64,
+        request_id: &str,
+        kind: RuntimeRequestKind,
+        request_digest: &str,
+    ) -> RuntimeResult<Option<RuntimeRequestReceipt>> {
+        Ok(self
+            .matching_receipt(unit_id, generation, request_id, kind, request_digest)
+            .await?
+            .filter(|receipt| receipt.state == RuntimeRequestState::Completed))
     }
 }
 
@@ -470,21 +484,24 @@ impl RuntimeClient for ManagedRuntimeClient {
     async fn exec(&self, request: &RuntimeExecRequest) -> RuntimeResult<RuntimeExecResult> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
         let request_digest = request.digest().map_err(RuntimeError::InvalidRequest)?;
-        if self
-            .completed_replay(
+        let operation_started_at_ms = self.clock.now_ms();
+        let existing = self
+            .matching_receipt(
                 &request.unit_id,
                 request.generation,
                 &request.request_id,
                 RuntimeRequestKind::Exec,
                 &request_digest,
             )
-            .await?
-            .is_some()
+            .await?;
+        if existing
+            .as_ref()
+            .is_some_and(|receipt| receipt.state == RuntimeRequestState::Completed)
         {
             let _lease = self.state.acquire_operation_lease(&request.unit_id).await?;
             let reservation = self
                 .state
-                .reserve_exec(request, self.clock.now_ms())
+                .reserve_exec(request, operation_started_at_ms)
                 .await?;
             if reservation.dispatch {
                 return Err(RuntimeError::Protocol(
@@ -495,7 +512,11 @@ impl RuntimeClient for ManagedRuntimeClient {
                 RuntimeError::Protocol("completed exec receipt has no result".into())
             });
         }
-        let deadline_at_ms = Some(self.exec_deadline(request));
+        let deadline_at_ms = existing
+            .as_ref()
+            .and_then(|receipt| receipt.deadline_at_ms)
+            .unwrap_or_else(|| self.exec_deadline(request, operation_started_at_ms));
+        let deadline_at_ms = Some(deadline_at_ms);
         self.check_deadline(deadline_at_ms)?;
         let capabilities = self
             .bounded(
@@ -519,13 +540,18 @@ impl RuntimeClient for ManagedRuntimeClient {
         self.check_deadline(deadline_at_ms)?;
         let reservation = self
             .state
-            .reserve_exec(request, self.clock.now_ms())
+            .reserve_exec(request, operation_started_at_ms)
             .await?;
         if !reservation.dispatch {
             return reservation.receipt.exec_result.ok_or_else(|| {
                 RuntimeError::Protocol("completed exec receipt has no result".into())
             });
         }
+        let deadline_at_ms = reservation.receipt.deadline_at_ms.ok_or_else(|| {
+            RuntimeError::Protocol("pending exec receipt has no effective deadline".into())
+        })?;
+        let deadline_at_ms = Some(deadline_at_ms);
+        self.check_deadline(deadline_at_ms)?;
         let result = self
             .bounded(
                 deadline_at_ms,

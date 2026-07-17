@@ -1309,6 +1309,44 @@ async fn maximum_exec_output_and_truncation_are_durable() {
 }
 
 #[tokio::test]
+async fn lc_exec_002_oversized_provider_result_stays_pending() {
+    let driver = Arc::new(TestDriver::new());
+    driver
+        .exec_stdout_bytes
+        .store(16 * 1024 * 1024 + 1, Ordering::SeqCst);
+    let (client, store) = driver.client();
+    client
+        .apply(&apply("exec-oversized-apply", service("exec-oversized", 1)))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-oversized-request".into(),
+        unit_id: "exec-oversized".into(),
+        generation: 1,
+        command: vec!["/bin/oversized-output".into()],
+        timeout_ms: 1_000,
+        deadline_at_ms: None,
+    };
+
+    for expected_calls in [1, 2] {
+        assert!(matches!(
+            client.exec(&request).await,
+            Err(RuntimeError::Protocol(message))
+                if message.contains("exec output exceeds protocol limits")
+        ));
+        assert_eq!(driver.exec_calls.load(Ordering::SeqCst), expected_calls);
+        assert_eq!(driver.exec_effect_count(), 1);
+        let receipt = store
+            .load_request("exec-oversized", "exec-oversized-request")
+            .await
+            .unwrap();
+        assert_eq!(receipt.state, a3s_runtime::RuntimeRequestState::Pending);
+        assert!(receipt.exec_result.is_none());
+    }
+}
+
+#[tokio::test]
 async fn completed_mutations_replay_after_deadline_provider_loss_and_removal() {
     let directory = tempfile::tempdir().unwrap();
     let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
@@ -1796,6 +1834,61 @@ async fn exec_uses_the_smaller_relative_or_absolute_deadline() {
         Err(RuntimeError::DeadlineExceeded(_))
     ));
     assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn lc_exec_001_pending_replay_cannot_extend_original_relative_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(TestDriver::new());
+    let clock = Arc::new(ManualClock::new(NOW));
+    let client = ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
+    client
+        .apply(&apply(
+            "exec-relative-replay-apply",
+            service("exec-relative-replay", 1),
+        ))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-relative-replay-request".into(),
+        unit_id: "exec-relative-replay".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 10,
+        deadline_at_ms: None,
+    };
+    driver.hang_exec.store(true, Ordering::SeqCst);
+
+    assert!(matches!(
+        client.exec(&request).await,
+        Err(RuntimeError::DeadlineExceeded(message)) if message.contains("provider exec")
+    ));
+    let pending = store
+        .load_request("exec-relative-replay", "exec-relative-replay-request")
+        .await
+        .unwrap();
+    assert_eq!(pending.state, a3s_runtime::RuntimeRequestState::Pending);
+    assert_eq!(pending.deadline_at_ms, Some(NOW + 10));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+
+    clock.set(NOW + 10);
+    driver.hang_exec.store(false, Ordering::SeqCst);
+    let restarted = ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock);
+    assert!(matches!(
+        restarted.exec(&request).await,
+        Err(RuntimeError::DeadlineExceeded(_))
+    ));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .load_request("exec-relative-replay", "exec-relative-replay-request")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
 }
 
 #[tokio::test]

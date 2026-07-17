@@ -215,6 +215,7 @@ impl FileRuntimeStateStore {
     fn reserve_exec_sync(
         &self,
         request: RuntimeExecRequest,
+        started_at_ms: u64,
     ) -> RuntimeResult<RuntimeStateReservation> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
         let _lock = self.lock(&request.unit_id)?;
@@ -252,8 +253,8 @@ impl FileRuntimeStateStore {
                 request.unit_id, record.observation.state
             )));
         }
-        let receipt =
-            RuntimeRequestReceipt::pending_exec(&request).map_err(RuntimeError::Protocol)?;
+        let receipt = RuntimeRequestReceipt::pending_exec(&request, started_at_ms)
+            .map_err(RuntimeError::Protocol)?;
         receipt.validate().map_err(RuntimeError::Protocol)?;
         receipt_path = self.request_path(&request.unit_id, &request.request_id, true)?;
         atomic_write(&receipt_path, &receipt, "request receipt")?;
@@ -513,11 +514,11 @@ impl RuntimeStateStore for FileRuntimeStateStore {
     async fn reserve_exec(
         &self,
         request: &RuntimeExecRequest,
-        _now_ms: u64,
+        now_ms: u64,
     ) -> RuntimeResult<RuntimeStateReservation> {
         let store = self.clone();
         let request = request.clone();
-        tokio::task::spawn_blocking(move || store.reserve_exec_sync(request))
+        tokio::task::spawn_blocking(move || store.reserve_exec_sync(request, now_ms))
             .await
             .map_err(task_error)?
     }

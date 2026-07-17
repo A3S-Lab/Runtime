@@ -50,11 +50,13 @@ encoded explicitly as `null` in v2 and requires no ephemeral-storage
 capability. Adding `size_bytes` to output artifacts changes observations to
 `a3s.runtime.observation.v2`. Adding typed provider identity and output
 capability changes capabilities to `a3s.runtime.capabilities.v3`. The durable
-request-journal layout uses `a3s.runtime.unit-record.v2`.
+request-journal layout uses `a3s.runtime.unit-record.v2`. Persisting the
+effective request deadline changes request receipts to
+`a3s.runtime.request-receipt.v2`.
 
-The Runtime core does not silently reinterpret v1 records. A caller that needs
-old records owns an explicit archival decoder or migration before starting the
-new client.
+The Runtime core does not silently reinterpret legacy records or receipts. A
+caller that needs old state owns an explicit archival decoder or migration
+before starting the new client.
 
 ### 2. Provider identity is one typed value
 
@@ -205,6 +207,11 @@ the unit lease and lets the state store reconcile a receipt-first crash before
 returning. Deadlines constrain unfinished work; they do not invalidate an
 already committed response. A pending replay remains subject to its original
 deadline and is never redispatched after that deadline expires.
+
+The request receipt stores the effective absolute deadline captured on first
+reservation. For Exec this is the smaller of the first attempt's relative
+timeout and optional absolute deadline; a retry cannot restart that relative
+timeout window.
 
 Drivers may enforce a shorter provider-specific timeout. They must never extend
 the caller deadline. Exec uses the smaller of its relative `timeout_ms` and an

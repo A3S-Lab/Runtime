@@ -150,7 +150,7 @@ fn ct_schema_001_every_top_level_wire_record_has_a_versioned_golden_fixture() {
         RuntimeUnitRecord::validate,
     );
     assert_top_level_fixture::<RuntimeRequestReceipt>(
-        include_str!("golden/request-receipt-v1.json"),
+        include_str!("golden/request-receipt-v2.json"),
         RuntimeRequestReceipt::SCHEMA,
         RuntimeRequestReceipt::validate,
     );

@@ -159,8 +159,15 @@ The real Docker gate runs from the A3S Cloud repository root:
 
 ```text
 A3S_CLOUD_TEST_DOCKER=1 cargo test -p a3s-cloud-node-agent \
-  --test docker_conformance -- --nocapture --test-threads=1
+  --test docker_conformance real_docker_passes_all_advertised_runtime_profiles \
+  -- --ignored --exact --nocapture --test-threads=1
 ```
+
+The Docker test is explicitly ignored in ordinary workspace runs. Its
+dedicated job must select the ignored test by exact name and fail unless the
+Docker enable flag, isolated provider restart target, and provider socket are
+present. This prevents an unavailable provider from being counted as a passing
+certification.
 
 The Runtime crate must declare a minimum supported Rust version before release;
 L0 tests that version and current stable on the production Linux architectures.

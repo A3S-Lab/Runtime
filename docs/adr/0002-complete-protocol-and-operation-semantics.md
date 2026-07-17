@@ -198,6 +198,14 @@ acquiring the operation lease, and use the remaining duration to bound the
 provider future. A timeout returns `DeadlineExceeded` and leaves a dispatched
 mutating request pending because provider acknowledgement is ambiguous.
 
+An exact replay whose receipt is already `completed` returns that durable
+result before capability or deadline checks, including after the original
+absolute deadline and after later lifecycle operations. The core reacquires
+the unit lease and lets the state store reconcile a receipt-first crash before
+returning. Deadlines constrain unfinished work; they do not invalidate an
+already committed response. A pending replay remains subject to its original
+deadline and is never redispatched after that deadline expires.
+
 Drivers may enforce a shorter provider-specific timeout. They must never extend
 the caller deadline. Exec uses the smaller of its relative `timeout_ms` and an
 optional absolute request deadline.

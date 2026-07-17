@@ -112,8 +112,10 @@ The `RuntimeClient` contract exposes:
 
 Each mutating request carries its own request ID and optional absolute deadline.
 An exact retry returns or reconstructs the same logical result. Reusing a
-request ID with different content fails with `RequestConflict`. A deadline is
-checked independently before provider dispatch.
+request ID with different content fails with `RequestConflict`. A completed
+receipt remains replayable after its original deadline and after later
+lifecycle operations; an expired pending request is not redispatched. A
+deadline is checked independently before new provider work.
 
 ## Capabilities
 

@@ -920,6 +920,103 @@ async fn completed_exec_replays_durably_after_client_restart_and_rejects_conflic
     assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn completed_mutations_replay_after_deadline_provider_loss_and_removal() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(TestDriver::new());
+    let clock = Arc::new(ManualClock::new(NOW));
+    let client =
+        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
+    let deadline = NOW + 1_000;
+
+    let mut apply_request = apply("durable-replay-apply", service("durable-replay", 1));
+    apply_request.deadline_at_ms = Some(deadline);
+    let applied = client.apply(&apply_request).await.unwrap();
+
+    let exec_request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "durable-replay-exec".into(),
+        unit_id: "durable-replay".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 500,
+        deadline_at_ms: Some(deadline),
+    };
+    let executed = client.exec(&exec_request).await.unwrap();
+
+    let mut stop_request = action("durable-replay-stop", "durable-replay", 1);
+    stop_request.deadline_at_ms = Some(deadline);
+    let stopped = client.stop(&stop_request).await.unwrap();
+
+    let mut remove_request = action("durable-replay-remove", "durable-replay", 1);
+    remove_request.deadline_at_ms = Some(deadline);
+    let removed = client.remove(&remove_request).await.unwrap();
+
+    clock.set(deadline);
+    driver.hang_capabilities.store(true, Ordering::SeqCst);
+    let restarted = ManagedRuntimeClient::with_clock(store, driver.clone(), clock);
+
+    assert_eq!(restarted.apply(&apply_request).await.unwrap(), applied);
+    assert_eq!(restarted.exec(&exec_request).await.unwrap(), executed);
+    assert_eq!(restarted.stop(&stop_request).await.unwrap(), stopped);
+    assert_eq!(restarted.remove(&remove_request).await.unwrap(), removed);
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(driver.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(driver.remove_calls.load(Ordering::SeqCst), 1);
+
+    let mut conflicting = apply_request;
+    conflicting.spec.process.command = vec!["/bin/false".into()];
+    assert!(matches!(
+        restarted.apply(&conflicting).await,
+        Err(RuntimeError::RequestConflict { .. })
+    ));
+}
+
+#[tokio::test]
+async fn expired_pending_request_remains_pending_and_is_not_redispatched() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileRuntimeStateStore::new(directory.path()));
+    let driver = Arc::new(TestDriver::new());
+    let clock = Arc::new(ManualClock::new(NOW));
+    let client =
+        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock.clone());
+    let mut request = apply("pending-expiry", service("pending-expiry", 1));
+    request.deadline_at_ms = Some(NOW + 10);
+    driver.hang_apply.store(true, Ordering::SeqCst);
+
+    assert!(matches!(
+        client.apply(&request).await,
+        Err(RuntimeError::DeadlineExceeded(message)) if message.contains("provider apply")
+    ));
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .load_request("pending-expiry", "pending-expiry")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
+
+    clock.set(NOW + 10);
+    driver.hang_apply.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        client.apply(&request).await,
+        Err(RuntimeError::DeadlineExceeded(_))
+    ));
+    assert_eq!(driver.apply_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .load_request("pending-expiry", "pending-expiry")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
+}
+
 #[test]
 fn top_level_log_exec_and_inspection_records_require_current_schemas() {
     let mut query = RuntimeLogQuery {

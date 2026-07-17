@@ -5,7 +5,8 @@ use crate::contract::{
 };
 use crate::{
     RuntimeActionKind, RuntimeClient, RuntimeClock, RuntimeDriver, RuntimeError, RuntimeResult,
-    RuntimeStateStore, SystemRuntimeClock,
+    RuntimeRequestKind, RuntimeRequestReceipt, RuntimeRequestState, RuntimeStateStore,
+    SystemRuntimeClock,
 };
 use async_trait::async_trait;
 use std::future::Future;
@@ -95,6 +96,36 @@ impl ManagedRuntimeClient {
             .deadline_at_ms
             .map_or(relative, |absolute| absolute.min(relative))
     }
+
+    async fn completed_replay(
+        &self,
+        unit_id: &str,
+        generation: u64,
+        request_id: &str,
+        kind: RuntimeRequestKind,
+        request_digest: &str,
+    ) -> RuntimeResult<Option<RuntimeRequestReceipt>> {
+        let receipt = match self.state.load_request(unit_id, request_id).await {
+            Ok(receipt) => receipt,
+            Err(RuntimeError::RequestNotFound { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        receipt.validate().map_err(RuntimeError::Protocol)?;
+        if receipt.unit_id != unit_id || receipt.request_id != request_id {
+            return Err(RuntimeError::Protocol(
+                "Runtime request receipt storage key mismatch".into(),
+            ));
+        }
+        if receipt.generation != generation
+            || receipt.kind != kind
+            || receipt.request_digest != request_digest
+        {
+            return Err(RuntimeError::RequestConflict {
+                request_id: request_id.into(),
+            });
+        }
+        Ok((receipt.state == RuntimeRequestState::Completed).then_some(receipt))
+    }
 }
 
 #[async_trait]
@@ -105,6 +136,35 @@ impl RuntimeClient for ManagedRuntimeClient {
 
     async fn apply(&self, request: &RuntimeApplyRequest) -> RuntimeResult<RuntimeObservation> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
+        let request_digest = request.digest().map_err(RuntimeError::InvalidRequest)?;
+        if self
+            .completed_replay(
+                &request.spec.unit_id,
+                request.spec.generation,
+                &request.request_id,
+                RuntimeRequestKind::Apply,
+                &request_digest,
+            )
+            .await?
+            .is_some()
+        {
+            let _lease = self
+                .state
+                .acquire_operation_lease(&request.spec.unit_id)
+                .await?;
+            let reservation = self
+                .state
+                .reserve_apply(request, self.clock.now_ms())
+                .await?;
+            if reservation.dispatch {
+                return Err(RuntimeError::Protocol(
+                    "completed apply receipt regressed to pending".into(),
+                ));
+            }
+            return reservation.receipt.observation.ok_or_else(|| {
+                RuntimeError::Protocol("completed apply receipt has no observation".into())
+            });
+        }
         self.check_deadline(request.deadline_at_ms)?;
         let capabilities = self
             .bounded(
@@ -220,6 +280,35 @@ impl RuntimeClient for ManagedRuntimeClient {
 
     async fn stop(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeInspection> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
+        let request_digest = request.digest().map_err(RuntimeError::InvalidRequest)?;
+        if self
+            .completed_replay(
+                &request.unit_id,
+                request.generation,
+                &request.request_id,
+                RuntimeRequestKind::Stop,
+                &request_digest,
+            )
+            .await?
+            .is_some()
+        {
+            let _lease = self.state.acquire_operation_lease(&request.unit_id).await?;
+            let reservation = self
+                .state
+                .reserve_action(RuntimeActionKind::Stop, request, self.clock.now_ms())
+                .await?;
+            if reservation.dispatch {
+                return Err(RuntimeError::Protocol(
+                    "completed stop receipt regressed to pending".into(),
+                ));
+            }
+            return Ok(RuntimeInspection::Found {
+                schema: RuntimeInspection::SCHEMA.into(),
+                observation: Box::new(reservation.receipt.observation.ok_or_else(|| {
+                    RuntimeError::Protocol("completed stop receipt has no observation".into())
+                })?),
+            });
+        }
         self.check_deadline(request.deadline_at_ms)?;
         let capabilities = self
             .bounded(
@@ -276,6 +365,32 @@ impl RuntimeClient for ManagedRuntimeClient {
 
     async fn remove(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeRemoval> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
+        let request_digest = request.digest().map_err(RuntimeError::InvalidRequest)?;
+        if self
+            .completed_replay(
+                &request.unit_id,
+                request.generation,
+                &request.request_id,
+                RuntimeRequestKind::Remove,
+                &request_digest,
+            )
+            .await?
+            .is_some()
+        {
+            let _lease = self.state.acquire_operation_lease(&request.unit_id).await?;
+            let reservation = self
+                .state
+                .reserve_action(RuntimeActionKind::Remove, request, self.clock.now_ms())
+                .await?;
+            if reservation.dispatch {
+                return Err(RuntimeError::Protocol(
+                    "completed remove receipt regressed to pending".into(),
+                ));
+            }
+            return reservation.receipt.removal.ok_or_else(|| {
+                RuntimeError::Protocol("completed remove receipt has no removal".into())
+            });
+        }
         self.check_deadline(request.deadline_at_ms)?;
         let capabilities = self
             .bounded(
@@ -354,6 +469,29 @@ impl RuntimeClient for ManagedRuntimeClient {
 
     async fn exec(&self, request: &RuntimeExecRequest) -> RuntimeResult<RuntimeExecResult> {
         request.validate().map_err(RuntimeError::InvalidRequest)?;
+        let request_digest = request.digest().map_err(RuntimeError::InvalidRequest)?;
+        if self
+            .completed_replay(
+                &request.unit_id,
+                request.generation,
+                &request.request_id,
+                RuntimeRequestKind::Exec,
+                &request_digest,
+            )
+            .await?
+            .is_some()
+        {
+            let _lease = self.state.acquire_operation_lease(&request.unit_id).await?;
+            let reservation = self.state.reserve_exec(request, self.clock.now_ms()).await?;
+            if reservation.dispatch {
+                return Err(RuntimeError::Protocol(
+                    "completed exec receipt regressed to pending".into(),
+                ));
+            }
+            return reservation.receipt.exec_result.ok_or_else(|| {
+                RuntimeError::Protocol("completed exec receipt has no result".into())
+            });
+        }
         let deadline_at_ms = Some(self.exec_deadline(request));
         self.check_deadline(deadline_at_ms)?;
         let capabilities = self

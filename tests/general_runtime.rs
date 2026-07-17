@@ -1168,10 +1168,7 @@ async fn pending_exec_reattaches_after_an_ambiguous_after_effect_error() {
     let driver = Arc::new(TestDriver::new());
     let (client, store) = driver.client();
     client
-        .apply(&apply(
-            "exec-ambiguous-apply",
-            service("exec-ambiguous", 1),
-        ))
+        .apply(&apply("exec-ambiguous-apply", service("exec-ambiguous", 1)))
         .await
         .unwrap();
     let request = RuntimeExecRequest {
@@ -1227,10 +1224,7 @@ async fn cancelled_exec_releases_the_lease_and_remains_replayable() {
     let (client, store) = driver.client();
     let client = Arc::new(client);
     client
-        .apply(&apply(
-            "exec-cancel-apply",
-            service("exec-cancel", 1),
-        ))
+        .apply(&apply("exec-cancel-apply", service("exec-cancel", 1)))
         .await
         .unwrap();
     let request = RuntimeExecRequest {
@@ -1304,8 +1298,7 @@ async fn maximum_exec_output_and_truncation_are_durable() {
     result.validate().unwrap();
     assert_eq!(driver.exec_effect_count(), 1);
 
-    let restarted =
-        ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+    let restarted = ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
     assert_eq!(restarted.exec(&request).await.unwrap(), result);
     assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
     assert_eq!(driver.exec_effect_count(), 1);

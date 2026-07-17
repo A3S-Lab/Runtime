@@ -12,7 +12,9 @@ fn adjacent_schema(schema: &str, offset: i64) -> String {
     let (prefix, version) = schema
         .rsplit_once(".v")
         .expect("versioned schema must end in .v<number>");
-    let version = version.parse::<i64>().expect("schema version must be numeric");
+    let version = version
+        .parse::<i64>()
+        .expect("schema version must be numeric");
     format!("{prefix}.v{}", version + offset)
 }
 
@@ -30,7 +32,10 @@ fn assert_top_level_fixture<T>(
     T: DeserializeOwned + Serialize,
 {
     let value: Value = serde_json::from_str(raw).expect("golden fixture must be valid JSON");
-    assert_eq!(value.get("schema"), Some(&Value::String(expected_schema.into())));
+    assert_eq!(
+        value.get("schema"),
+        Some(&Value::String(expected_schema.into()))
+    );
 
     let decoded: T =
         serde_json::from_value(value.clone()).expect("current golden fixture must decode");

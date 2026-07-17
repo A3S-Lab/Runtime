@@ -329,6 +329,8 @@ impl FileRuntimeStateStore {
                 receipt.complete_with_observation(observation.clone());
                 receipt.validate().map_err(RuntimeError::Protocol)?;
                 atomic_write(&receipt_path, &receipt, "request receipt")?;
+                #[cfg(test)]
+                test_failpoint("state.complete-observation.after-receipt-publish");
             }
         }
 
@@ -367,6 +369,8 @@ impl FileRuntimeStateStore {
             receipt.complete_with_removal(removal.clone());
             receipt.validate().map_err(RuntimeError::Protocol)?;
             atomic_write(&receipt_path, &receipt, "request receipt")?;
+            #[cfg(test)]
+            test_failpoint("state.complete-removal.after-receipt-publish");
         }
         record.removed_at_ms = Some(removal.removed_at_ms);
         record.validate().map_err(RuntimeError::Protocol)?;
@@ -407,6 +411,8 @@ impl FileRuntimeStateStore {
             receipt.complete_with_exec_result(result.clone());
             receipt.validate().map_err(RuntimeError::Protocol)?;
             atomic_write(&receipt_path, &receipt, "request receipt")?;
+            #[cfg(test)]
+            test_failpoint("state.complete-exec.after-receipt-publish");
         }
         record.observation = result.observation;
         record.validate().map_err(RuntimeError::Protocol)?;
@@ -1023,3 +1029,11 @@ fn task_error(error: tokio::task::JoinError) -> RuntimeError {
 fn io_error(action: &'static str) -> impl FnOnce(std::io::Error) -> RuntimeError {
     move |error| RuntimeError::Transport(format!("could not {action}: {error}"))
 }
+
+#[cfg(test)]
+fn test_failpoint(name: &str) {
+    tests::hit_failpoint(name);
+}
+
+#[cfg(test)]
+mod tests;

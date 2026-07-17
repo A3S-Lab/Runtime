@@ -1,12 +1,10 @@
 use a3s_runtime::contract::{
     IsolationLevel, NetworkMode, ResourceControl, RuntimeActionRequest, RuntimeCapabilities,
-    RuntimeExecRequest, RuntimeExecResult, RuntimeInspection, RuntimeLogChunk, RuntimeLogQuery,
-    RuntimeLogStream, RuntimeObservation, RuntimeRemoval, RuntimeUnitClass, RuntimeUnitSpec,
-    RuntimeUnitState,
+    RuntimeExecRequest, RuntimeExecResult, RuntimeFeature, RuntimeInspection, RuntimeLogChunk,
+    RuntimeLogQuery, RuntimeLogStream, RuntimeObservation, RuntimeRemoval, RuntimeUnitClass,
+    RuntimeUnitSpec, RuntimeUnitState,
 };
-use a3s_runtime::{
-    ProviderId, RuntimeDriver, RuntimeError, RuntimeFeature, RuntimeResult, RuntimeUnitRecord,
-};
+use a3s_runtime::{ProviderId, RuntimeDriver, RuntimeError, RuntimeResult, RuntimeUnitRecord};
 use async_trait::async_trait;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;

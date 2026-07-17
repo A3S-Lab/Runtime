@@ -1101,6 +1101,7 @@ async fn provider_registry_rejects_a_factory_client_identity_mismatch() {
 #[cfg(unix)]
 #[tokio::test]
 async fn file_state_store_rejects_symbolic_link_boundaries() {
+    use sha2::{Digest, Sha256};
     use std::os::unix::fs::symlink;
 
     let directory = tempfile::tempdir().unwrap();
@@ -1124,12 +1125,9 @@ async fn file_state_store_rejects_symbolic_link_boundaries() {
         .reserve_apply(&apply("secure", task("secure-unit", 1)), NOW)
         .await
         .unwrap();
-    let lock_path = std::fs::read_dir(root.join("locks"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
+    let lock_path = root
+        .join("locks")
+        .join(format!("{:x}.lock", Sha256::digest(b"secure-unit")));
     std::fs::remove_file(&lock_path).unwrap();
     let lock_target = root.join("lock-target");
     std::fs::write(&lock_target, b"do not follow").unwrap();

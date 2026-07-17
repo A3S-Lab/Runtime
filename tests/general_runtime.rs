@@ -60,7 +60,11 @@ struct TestDriver {
     stop_calls: AtomicUsize,
     remove_calls: AtomicUsize,
     exec_calls: AtomicUsize,
+    exec_effects: Mutex<BTreeMap<String, RuntimeExecResult>>,
+    exec_stdout_bytes: AtomicUsize,
+    exec_truncated: AtomicBool,
     fail_next_apply: AtomicBool,
+    fail_next_exec_after_effect: AtomicBool,
     missing_on_inspect: AtomicBool,
     substitute_identity: AtomicBool,
     unordered_logs: AtomicBool,
@@ -85,7 +89,11 @@ impl TestDriver {
             stop_calls: AtomicUsize::new(0),
             remove_calls: AtomicUsize::new(0),
             exec_calls: AtomicUsize::new(0),
+            exec_effects: Mutex::new(BTreeMap::new()),
+            exec_stdout_bytes: AtomicUsize::new(0),
+            exec_truncated: AtomicBool::new(false),
             fail_next_apply: AtomicBool::new(false),
+            fail_next_exec_after_effect: AtomicBool::new(false),
             missing_on_inspect: AtomicBool::new(false),
             substitute_identity: AtomicBool::new(false),
             unordered_logs: AtomicBool::new(false),
@@ -107,6 +115,10 @@ impl TestDriver {
         let client =
             ManagedRuntimeClient::with_clock(store.clone(), self.clone(), Arc::new(FixedClock));
         (client, store)
+    }
+
+    fn exec_effect_count(&self) -> usize {
+        self.exec_effects.lock().unwrap().len()
     }
 }
 
@@ -486,19 +498,44 @@ impl RuntimeDriver for TestDriver {
         if self.hang_exec.load(Ordering::SeqCst) {
             return std::future::pending::<RuntimeResult<RuntimeExecResult>>().await;
         }
+        let effect_key = format!(
+            "{}/{}/{}",
+            request.unit_id, request.generation, request.request_id
+        );
+        if let Some(result) = self.exec_effects.lock().unwrap().get(&effect_key).cloned() {
+            return Ok(result);
+        }
         let mut observation = unit.observation.clone();
         if self.substitute_exec_spec.load(Ordering::SeqCst) {
             observation.spec_digest = digest('f');
         }
-        Ok(RuntimeExecResult {
+        let stdout_bytes = self.exec_stdout_bytes.load(Ordering::SeqCst);
+        let result = RuntimeExecResult {
             schema: RuntimeExecResult::SCHEMA.into(),
             request_id: request.request_id.clone(),
             observation,
             exit_code: 0,
-            stdout: "ok\n".into(),
+            stdout: if stdout_bytes == 0 {
+                "ok\n".into()
+            } else {
+                "x".repeat(stdout_bytes)
+            },
             stderr: String::new(),
-            truncated: false,
-        })
+            truncated: self.exec_truncated.load(Ordering::SeqCst),
+        };
+        self.exec_effects
+            .lock()
+            .unwrap()
+            .insert(effect_key, result.clone());
+        if self
+            .fail_next_exec_after_effect
+            .swap(false, Ordering::SeqCst)
+        {
+            return Err(RuntimeError::Transport(
+                "ambiguous exec acknowledgement".into(),
+            ));
+        }
+        Ok(result)
     }
 }
 
@@ -1124,6 +1161,158 @@ async fn completed_exec_replays_durably_after_client_restart_and_rejects_conflic
         Err(RuntimeError::RequestConflict { .. })
     ));
     assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn pending_exec_reattaches_after_an_ambiguous_after_effect_error() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, store) = driver.client();
+    client
+        .apply(&apply(
+            "exec-ambiguous-apply",
+            service("exec-ambiguous", 1),
+        ))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-ambiguous-request".into(),
+        unit_id: "exec-ambiguous".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 1_000,
+        deadline_at_ms: None,
+    };
+    driver
+        .fail_next_exec_after_effect
+        .store(true, Ordering::SeqCst);
+
+    assert!(matches!(
+        client.exec(&request).await,
+        Err(RuntimeError::Transport(message)) if message.contains("ambiguous exec")
+    ));
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(driver.exec_effect_count(), 1);
+    assert_eq!(
+        store
+            .load_request("exec-ambiguous", "exec-ambiguous-request")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
+
+    let restarted =
+        ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), Arc::new(FixedClock));
+    let recovered = restarted.exec(&request).await.unwrap();
+    assert_eq!(recovered.stdout, "ok\n");
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(driver.exec_effect_count(), 1);
+    assert_eq!(
+        store
+            .load_request("exec-ambiguous", "exec-ambiguous-request")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Completed
+    );
+    assert_eq!(restarted.exec(&request).await.unwrap(), recovered);
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(driver.exec_effect_count(), 1);
+}
+
+#[tokio::test]
+async fn cancelled_exec_releases_the_lease_and_remains_replayable() {
+    let driver = Arc::new(TestDriver::new());
+    let (client, store) = driver.client();
+    let client = Arc::new(client);
+    client
+        .apply(&apply(
+            "exec-cancel-apply",
+            service("exec-cancel", 1),
+        ))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-cancel-request".into(),
+        unit_id: "exec-cancel".into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 10_000,
+        deadline_at_ms: None,
+    };
+    driver.hang_exec.store(true, Ordering::SeqCst);
+    let operation = {
+        let client = client.clone();
+        let request = request.clone();
+        tokio::spawn(async move { client.exec(&request).await })
+    };
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while driver.exec_calls.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("exec did not reach the provider before cancellation");
+    operation.abort();
+    assert!(operation.await.unwrap_err().is_cancelled());
+    assert_eq!(driver.exec_effect_count(), 0);
+    assert_eq!(
+        store
+            .load_request("exec-cancel", "exec-cancel-request")
+            .await
+            .unwrap()
+            .state,
+        a3s_runtime::RuntimeRequestState::Pending
+    );
+
+    driver.hang_exec.store(false, Ordering::SeqCst);
+    let recovered = tokio::time::timeout(Duration::from_secs(1), client.exec(&request))
+        .await
+        .expect("cancelled exec retained its operation lease")
+        .unwrap();
+    assert_eq!(recovered.stdout, "ok\n");
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(driver.exec_effect_count(), 1);
+}
+
+#[tokio::test]
+async fn maximum_exec_output_and_truncation_are_durable() {
+    let driver = Arc::new(TestDriver::new());
+    driver
+        .exec_stdout_bytes
+        .store(16 * 1024 * 1024, Ordering::SeqCst);
+    driver.exec_truncated.store(true, Ordering::SeqCst);
+    let (client, store) = driver.client();
+    client
+        .apply(&apply("exec-large-apply", service("exec-large", 1)))
+        .await
+        .unwrap();
+    let request = RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: "exec-large-request".into(),
+        unit_id: "exec-large".into(),
+        generation: 1,
+        command: vec!["/bin/large-output".into()],
+        timeout_ms: 1_000,
+        deadline_at_ms: None,
+    };
+    let result = client.exec(&request).await.unwrap();
+    assert_eq!(result.stdout.len(), 16 * 1024 * 1024);
+    assert!(result.truncated);
+    result.validate().unwrap();
+    assert_eq!(driver.exec_effect_count(), 1);
+
+    let restarted =
+        ManagedRuntimeClient::with_clock(store, driver.clone(), Arc::new(FixedClock));
+    assert_eq!(restarted.exec(&request).await.unwrap(), result);
+    assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(driver.exec_effect_count(), 1);
+
+    let mut oversized = result;
+    oversized.stdout.push('x');
+    assert!(oversized.validate().is_err());
 }
 
 #[tokio::test]

@@ -50,7 +50,8 @@ their owning applications.
 - **Durable Local State**: Persist owner-only records atomically under
   cross-process locks without following symbolic-link state boundaries
 - **Logs and Exec**: Expose generation-bound log and exec surfaces only when a
-  provider reports the corresponding capability
+  provider reports the corresponding capability, with typed cursor-loss and
+  source-disconnect discontinuities
 - **Capability-Driven Conformance**: Always run complete Base and Recovery
   profiles, automatically activate advertised optional profiles, and reject
   missing fixtures, incomplete evidence, or provider inventory leaks
@@ -108,7 +109,7 @@ The `RuntimeClient` contract exposes:
 | `inspect` | Return the latest observation or a generation-aware absence |
 | `stop` | Stop the active generation without deleting durable identity |
 | `remove` | Remove the provider resource and persist an absence tombstone |
-| `logs` | Read strictly ordered, cursor-addressed log chunks |
+| `logs` | Read strictly ordered, cursor-addressed log chunks or return a typed permanent discontinuity |
 | `exec` | Execute a bounded command against the exact active generation |
 
 Each mutating request carries its own request ID and optional absolute deadline.
@@ -121,6 +122,14 @@ reservation, Runtime persists the smaller of `started_at + timeout_ms` and the
 optional caller deadline. `RuntimeDriver::exec` receives that effective
 absolute deadline in `deadline_at_ms`, and every pending replay receives the
 same value, so retrying cannot restart or extend the execution window.
+
+Log transport or provider availability failures remain retryable errors. A
+provider that can prove the requested cursor was lost, or that the durable unit
+survives after its log source disappeared, instead returns
+`RuntimeError::LogDiscontinuity` with the exact unit, generation, requested
+cursor, and typed reason. Callers can durably project that boundary before
+resuming from the earliest currently available record without parsing error
+text.
 
 ## Capabilities
 

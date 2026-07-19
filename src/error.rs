@@ -10,6 +10,8 @@ pub enum RuntimeError {
     NotFound { unit_id: String },
     #[error("Runtime request {request_id:?} conflicts with a prior request")]
     RequestConflict { request_id: String },
+    #[error("Runtime request {request_id:?} for unit {unit_id:?} was not found")]
+    RequestNotFound { unit_id: String, request_id: String },
     #[error(
         "Runtime unit {unit_id:?} rejected stale generation {requested}; current generation is {current}"
     )]

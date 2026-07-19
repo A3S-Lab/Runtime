@@ -226,7 +226,7 @@ pub struct RuntimeUnitSpec {
 }
 
 impl RuntimeUnitSpec {
-    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v1";
+    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v2";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -324,7 +324,7 @@ mod tests {
             cpu_millis: 500,
             memory_bytes: 128 * 1024 * 1024,
             pids: 128,
-            ephemeral_storage_bytes: 1024 * 1024 * 1024,
+            ephemeral_storage_bytes: Some(1024 * 1024 * 1024),
             execution_timeout_ms: timeout,
         }
     }

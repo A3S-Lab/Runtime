@@ -106,6 +106,7 @@ pub enum RuntimeLogStream {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeLogQuery {
+    pub schema: String,
     pub unit_id: String,
     pub generation: u64,
     pub cursor: Option<String>,
@@ -114,7 +115,15 @@ pub struct RuntimeLogQuery {
 }
 
 impl RuntimeLogQuery {
+    pub const SCHEMA: &'static str = "a3s.runtime.log-query.v1";
+
     pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime log query schema {:?}",
+                self.schema
+            ));
+        }
         super::validate_id("unit_id", &self.unit_id, 512)?;
         if self.generation == 0 || self.limit == 0 || self.limit > 10_000 {
             return Err("log generation or limit is invalid".into());
@@ -133,6 +142,7 @@ impl RuntimeLogQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeLogChunk {
+    pub schema: String,
     pub cursor: String,
     pub sequence: u64,
     pub observed_at_ms: u64,
@@ -141,7 +151,15 @@ pub struct RuntimeLogChunk {
 }
 
 impl RuntimeLogChunk {
+    pub const SCHEMA: &'static str = "a3s.runtime.log-chunk.v1";
+
     pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime log chunk schema {:?}",
+                self.schema
+            ));
+        }
         super::validate_nonempty("log cursor", &self.cursor, 1024)?;
         if self.data.len() > 1024 * 1024 {
             return Err("log chunk exceeds one MiB".into());
@@ -153,19 +171,30 @@ impl RuntimeLogChunk {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeExecRequest {
+    pub schema: String,
     pub request_id: String,
     pub unit_id: String,
     pub generation: u64,
     pub command: Vec<String>,
     pub timeout_ms: u64,
+    pub deadline_at_ms: Option<u64>,
 }
 
 impl RuntimeExecRequest {
+    pub const SCHEMA: &'static str = "a3s.runtime.exec-request.v1";
+
     pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime exec request schema {:?}",
+                self.schema
+            ));
+        }
         super::validate_id("request_id", &self.request_id, 512)?;
         super::validate_id("unit_id", &self.unit_id, 512)?;
         if self.generation == 0
             || self.timeout_ms == 0
+            || self.deadline_at_ms == Some(0)
             || self.command.is_empty()
             || self.command.len() > 256
             || self
@@ -177,11 +206,16 @@ impl RuntimeExecRequest {
         }
         Ok(())
     }
+
+    pub fn digest(&self) -> Result<String, String> {
+        canonical_digest(self, self.validate())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeExecResult {
+    pub schema: String,
     pub request_id: String,
     pub observation: RuntimeObservation,
     pub exit_code: i32,
@@ -191,7 +225,15 @@ pub struct RuntimeExecResult {
 }
 
 impl RuntimeExecResult {
+    pub const SCHEMA: &'static str = "a3s.runtime.exec-result.v1";
+
     pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime exec result schema {:?}",
+                self.schema
+            ));
+        }
         super::validate_id("request_id", &self.request_id, 512)?;
         self.observation.validate()?;
         if self.stdout.len() > 16 * 1024 * 1024 || self.stderr.len() > 16 * 1024 * 1024 {

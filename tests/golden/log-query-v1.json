@@ -1,0 +1,8 @@
+{
+  "schema": "a3s.runtime.log-query.v1",
+  "unit_id": "golden-service",
+  "generation": 3,
+  "cursor": "cursor-41",
+  "limit": 100,
+  "stream": "stderr"
+}

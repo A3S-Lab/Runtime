@@ -1,0 +1,7 @@
+{
+  "schema": "a3s.runtime.action-request.v1",
+  "request_id": "golden-stop",
+  "unit_id": "golden-service",
+  "generation": 3,
+  "deadline_at_ms": 200000
+}

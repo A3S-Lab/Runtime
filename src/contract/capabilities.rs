@@ -1,6 +1,7 @@
 use super::{
     HealthCheckKind, IsolationLevel, MountKind, NetworkMode, RuntimeUnitClass, RuntimeUnitSpec,
 };
+use crate::ProviderId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -25,6 +26,7 @@ pub enum RuntimeFeature {
     Usage,
     Attestation,
     SecretReferences,
+    OutputArtifacts,
 }
 
 /// Structured, provider-reported capabilities. Product-specific support
@@ -33,7 +35,7 @@ pub enum RuntimeFeature {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeCapabilities {
     pub schema: String,
-    pub provider_id: String,
+    pub provider_id: ProviderId,
     pub provider_build: String,
     pub unit_classes: Vec<RuntimeUnitClass>,
     pub artifact_media_types: Vec<String>,
@@ -46,7 +48,7 @@ pub struct RuntimeCapabilities {
 }
 
 impl RuntimeCapabilities {
-    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v2";
+    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v3";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -55,7 +57,6 @@ impl RuntimeCapabilities {
                 self.schema
             ));
         }
-        super::validate_id("provider_id", &self.provider_id, 64)?;
         super::validate_nonempty("provider_build", &self.provider_build, 255)?;
         if self.unit_classes.is_empty()
             || self.artifact_media_types.is_empty()
@@ -116,11 +117,17 @@ impl RuntimeCapabilities {
             ResourceControl::Cpu,
             ResourceControl::Memory,
             ResourceControl::Pids,
-            ResourceControl::EphemeralStorage,
         ] {
             if !self.resource_controls.contains(&required) {
                 missing.push(format!("resource_control:{required:?}"));
             }
+        }
+        if spec.resources.ephemeral_storage_bytes.is_some()
+            && !self
+                .resource_controls
+                .contains(&ResourceControl::EphemeralStorage)
+        {
+            missing.push("resource_control:EphemeralStorage".into());
         }
         if spec.resources.execution_timeout_ms.is_some()
             && !self
@@ -134,6 +141,14 @@ impl RuntimeCapabilities {
         }
         if !spec.secrets.is_empty() && !self.supports_feature(RuntimeFeature::SecretReferences) {
             missing.push("feature:SecretReferences".into());
+        }
+        if !spec.outputs.is_empty() && !self.supports_feature(RuntimeFeature::OutputArtifacts) {
+            missing.push("feature:OutputArtifacts".into());
+        }
+        if spec.isolation == IsolationLevel::Confidential
+            && !self.supports_feature(RuntimeFeature::Attestation)
+        {
+            missing.push("feature:Attestation".into());
         }
         missing.sort();
         missing.dedup();

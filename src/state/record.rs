@@ -1,8 +1,8 @@
 use crate::contract::{
-    RuntimeActionRequest, RuntimeApplyRequest, RuntimeObservation, RuntimeRemoval, RuntimeUnitSpec,
+    RuntimeActionRequest, RuntimeApplyRequest, RuntimeExecRequest, RuntimeExecResult,
+    RuntimeObservation, RuntimeRemoval, RuntimeUnitSpec,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,6 +17,7 @@ pub enum RuntimeRequestKind {
     Apply,
     Stop,
     Remove,
+    Exec,
 }
 
 impl From<RuntimeActionKind> for RuntimeRequestKind {
@@ -38,74 +39,190 @@ pub enum RuntimeRequestState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeRequestReceipt {
+    pub schema: String,
     pub request_id: String,
+    pub unit_id: String,
+    pub generation: u64,
     pub kind: RuntimeRequestKind,
     pub request_digest: String,
+    /// Effective absolute deadline captured when the request was first reserved.
+    ///
+    /// Exec always has a deadline because its relative timeout is converted to
+    /// an absolute value. Persisting it prevents a pending replay from extending
+    /// the original execution budget.
+    pub deadline_at_ms: Option<u64>,
     pub state: RuntimeRequestState,
     pub observation: Option<RuntimeObservation>,
     pub removal: Option<RuntimeRemoval>,
+    pub exec_result: Option<RuntimeExecResult>,
 }
 
 impl RuntimeRequestReceipt {
+    pub const SCHEMA: &'static str = "a3s.runtime.request-receipt.v2";
+
     pub(crate) fn pending_apply(request: &RuntimeApplyRequest) -> Result<Self, String> {
-        Ok(Self {
-            request_id: request.request_id.clone(),
-            kind: RuntimeRequestKind::Apply,
-            request_digest: request.digest()?,
-            state: RuntimeRequestState::Pending,
-            observation: None,
-            removal: None,
-        })
+        Ok(Self::pending(
+            request.request_id.clone(),
+            request.spec.unit_id.clone(),
+            request.spec.generation,
+            RuntimeRequestKind::Apply,
+            request.digest()?,
+            request.deadline_at_ms,
+        ))
     }
 
     pub(crate) fn pending_action(
         kind: RuntimeActionKind,
         request: &RuntimeActionRequest,
     ) -> Result<Self, String> {
-        Ok(Self {
-            request_id: request.request_id.clone(),
-            kind: kind.into(),
-            request_digest: request.digest()?,
+        Ok(Self::pending(
+            request.request_id.clone(),
+            request.unit_id.clone(),
+            request.generation,
+            kind.into(),
+            request.digest()?,
+            request.deadline_at_ms,
+        ))
+    }
+
+    pub(crate) fn pending_exec(
+        request: &RuntimeExecRequest,
+        started_at_ms: u64,
+    ) -> Result<Self, String> {
+        let relative_deadline = started_at_ms.saturating_add(request.timeout_ms);
+        let deadline_at_ms = request
+            .deadline_at_ms
+            .map_or(relative_deadline, |absolute| {
+                absolute.min(relative_deadline)
+            });
+        Ok(Self::pending(
+            request.request_id.clone(),
+            request.unit_id.clone(),
+            request.generation,
+            RuntimeRequestKind::Exec,
+            request.digest()?,
+            Some(deadline_at_ms),
+        ))
+    }
+
+    fn pending(
+        request_id: String,
+        unit_id: String,
+        generation: u64,
+        kind: RuntimeRequestKind,
+        request_digest: String,
+        deadline_at_ms: Option<u64>,
+    ) -> Self {
+        Self {
+            schema: Self::SCHEMA.into(),
+            request_id,
+            unit_id,
+            generation,
+            kind,
+            request_digest,
+            deadline_at_ms,
             state: RuntimeRequestState::Pending,
             observation: None,
             removal: None,
-        })
+            exec_result: None,
+        }
     }
 
     pub(crate) fn complete_with_observation(&mut self, observation: RuntimeObservation) {
         self.state = RuntimeRequestState::Completed;
         self.observation = Some(observation);
         self.removal = None;
+        self.exec_result = None;
     }
 
     pub(crate) fn complete_with_removal(&mut self, removal: RuntimeRemoval) {
         self.state = RuntimeRequestState::Completed;
         self.observation = None;
         self.removal = Some(removal);
+        self.exec_result = None;
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn complete_with_exec_result(&mut self, result: RuntimeExecResult) {
+        self.state = RuntimeRequestState::Completed;
+        self.observation = None;
+        self.removal = None;
+        self.exec_result = Some(result);
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime request receipt schema {:?}",
+                self.schema
+            ));
+        }
         crate::contract::validate_id("request_id", &self.request_id, 512)?;
+        crate::contract::validate_id("unit_id", &self.unit_id, 512)?;
+        if self.generation == 0 {
+            return Err("Runtime request receipt generation must be positive".into());
+        }
+        if self.deadline_at_ms == Some(0)
+            || (self.kind == RuntimeRequestKind::Exec && self.deadline_at_ms.is_none())
+        {
+            return Err("Runtime request receipt deadline is invalid".into());
+        }
         crate::contract::validate_digest(&self.request_digest)?;
-        match (self.kind, self.state) {
-            (_, RuntimeRequestState::Pending)
-                if self.observation.is_none() && self.removal.is_none() =>
-            {
-                Ok(())
-            }
+        match (
+            self.kind,
+            self.state,
+            &self.observation,
+            &self.removal,
+            &self.exec_result,
+        ) {
+            (_, RuntimeRequestState::Pending, None, None, None) => Ok(()),
             (
                 RuntimeRequestKind::Apply | RuntimeRequestKind::Stop,
                 RuntimeRequestState::Completed,
-            ) if self.observation.is_some() && self.removal.is_none() => {
-                self.observation.as_ref().unwrap().validate()
+                Some(observation),
+                None,
+                None,
+            ) => {
+                observation.validate()?;
+                self.validate_unit_result(&observation.unit_id, observation.generation)
             }
-            (RuntimeRequestKind::Remove, RuntimeRequestState::Completed)
-                if self.observation.is_none() && self.removal.is_some() =>
-            {
-                self.removal.as_ref().unwrap().validate()
+            (
+                RuntimeRequestKind::Remove,
+                RuntimeRequestState::Completed,
+                None,
+                Some(removal),
+                None,
+            ) => {
+                removal.validate()?;
+                if removal.request_id != self.request_id {
+                    return Err("Runtime removal receipt request identity mismatch".into());
+                }
+                self.validate_unit_result(&removal.unit_id, removal.generation)
+            }
+            (
+                RuntimeRequestKind::Exec,
+                RuntimeRequestState::Completed,
+                None,
+                None,
+                Some(result),
+            ) => {
+                result.validate()?;
+                if result.request_id != self.request_id {
+                    return Err("Runtime exec receipt request identity mismatch".into());
+                }
+                self.validate_unit_result(
+                    &result.observation.unit_id,
+                    result.observation.generation,
+                )
             }
             _ => Err("Runtime request receipt result does not match its kind and state".into()),
         }
+    }
+
+    fn validate_unit_result(&self, unit_id: &str, generation: u64) -> Result<(), String> {
+        if unit_id != self.unit_id || generation != self.generation {
+            return Err("Runtime request receipt result identity mismatch".into());
+        }
+        Ok(())
     }
 }
 
@@ -116,22 +233,17 @@ pub struct RuntimeUnitRecord {
     pub spec: RuntimeUnitSpec,
     pub observation: RuntimeObservation,
     pub removed_at_ms: Option<u64>,
-    pub requests: BTreeMap<String, RuntimeRequestReceipt>,
 }
 
 impl RuntimeUnitRecord {
-    pub const SCHEMA: &'static str = "a3s.runtime.unit-record.v1";
+    pub const SCHEMA: &'static str = "a3s.runtime.unit-record.v2";
 
     pub(crate) fn new(request: &RuntimeApplyRequest, now_ms: u64) -> Result<Self, String> {
-        let receipt = RuntimeRequestReceipt::pending_apply(request)?;
-        let mut requests = BTreeMap::new();
-        requests.insert(request.request_id.clone(), receipt);
         let record = Self {
             schema: Self::SCHEMA.into(),
             spec: request.spec.clone(),
             observation: RuntimeObservation::accepted(&request.spec, now_ms)?,
             removed_at_ms: None,
-            requests,
         };
         record.validate()?;
         Ok(record)
@@ -145,40 +257,7 @@ impl RuntimeUnitRecord {
             ));
         }
         self.spec.validate()?;
-        self.observation.validate_against(&self.spec)?;
-        if self.requests.len() > 10_000 {
-            return Err("Runtime unit record exceeds request receipt limit".into());
-        }
-        for (request_id, receipt) in &self.requests {
-            receipt.validate()?;
-            if request_id != &receipt.request_id {
-                return Err("Runtime request receipt key mismatch".into());
-            }
-            if let Some(observation) = &receipt.observation {
-                if observation.unit_id != self.spec.unit_id {
-                    return Err("Runtime request receipt belongs to another unit".into());
-                }
-            }
-            if let Some(removal) = &receipt.removal {
-                if removal.unit_id != self.spec.unit_id {
-                    return Err("Runtime removal receipt belongs to another unit".into());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn receipt(&self, request_id: &str) -> Option<&RuntimeRequestReceipt> {
-        self.requests.get(request_id)
-    }
-
-    pub(crate) fn receipt_mut(
-        &mut self,
-        request_id: &str,
-    ) -> Result<&mut RuntimeRequestReceipt, String> {
-        self.requests
-            .get_mut(request_id)
-            .ok_or_else(|| format!("Runtime request receipt {request_id:?} was not reserved"))
+        self.observation.validate_against(&self.spec)
     }
 }
 

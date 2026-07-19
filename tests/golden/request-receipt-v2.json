@@ -1,0 +1,43 @@
+{
+  "schema": "a3s.runtime.request-receipt.v2",
+  "request_id": "golden-exec",
+  "unit_id": "golden-service",
+  "generation": 3,
+  "kind": "exec",
+  "request_digest": "sha256:861f6cad44261c49a89b5cd12920ca3977d833b5c9143d748db945a08939bad0",
+  "deadline_at_ms": 200000,
+  "state": "completed",
+  "observation": null,
+  "removal": null,
+  "exec_result": {
+    "schema": "a3s.runtime.exec-result.v1",
+    "request_id": "golden-exec",
+    "observation": {
+      "schema": "a3s.runtime.observation.v2",
+      "unit_id": "golden-service",
+      "generation": 3,
+      "spec_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "class": "service",
+      "state": "running",
+      "provider_resource_id": "golden/service/3",
+      "provider_build": "golden-runtime/1.2.3",
+      "observed_at_ms": 120000,
+      "started_at_ms": 100000,
+      "finished_at_ms": null,
+      "health": {
+        "state": "healthy",
+        "checked_at_ms": 119000,
+        "message": "ready"
+      },
+      "outputs": [],
+      "usage": null,
+      "evidence": null,
+      "provider_attestation": null,
+      "failure": null
+    },
+    "exit_code": 0,
+    "stdout": "ready",
+    "stderr": "",
+    "truncated": false
+  }
+}

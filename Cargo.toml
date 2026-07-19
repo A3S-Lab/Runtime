@@ -2,6 +2,7 @@
 name = "a3s-runtime"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.85"
 description = "Provider-neutral execution contract and client for A3S runtimes"
 license = "MIT"
 repository = "https://github.com/A3S-Lab/Runtime"
@@ -14,7 +15,7 @@ serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

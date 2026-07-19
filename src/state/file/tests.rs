@@ -1,0 +1,716 @@
+use super::*;
+use crate::contract::{
+    ArtifactRef, IsolationLevel, NetworkMode, ResourceLimits, RestartPolicy, RuntimeActionRequest,
+    RuntimeApplyRequest, RuntimeExecRequest, RuntimeExecResult, RuntimeNetworkSpec,
+    RuntimeObservation, RuntimeProcessSpec, RuntimeRemoval, RuntimeUnitClass, RuntimeUnitSpec,
+    RuntimeUnitState,
+};
+use crate::RuntimeRequestState;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const NOW: u64 = 10_000;
+const UNIT_ID: &str = "receipt-first-unit";
+const APPLY_ID: &str = "receipt-first-apply";
+const STOP_ID: &str = "receipt-first-stop";
+const REMOVE_ID: &str = "receipt-first-remove";
+const EXEC_ID: &str = "receipt-first-exec";
+const FAILPOINT_ENV: &str = "A3S_RUNTIME_TEST_FAILPOINT";
+const IO_FAULT_ENV: &str = "A3S_RUNTIME_TEST_IO_FAULT";
+const READY_ENV: &str = "A3S_RUNTIME_TEST_FAILPOINT_READY";
+const ROOT_ENV: &str = "A3S_RUNTIME_TEST_STATE_ROOT";
+const OPERATION_ENV: &str = "A3S_RUNTIME_TEST_COMPLETION_KIND";
+const OBSERVATION_FAILPOINT: &str = "state.complete-observation.after-receipt-publish";
+const REMOVAL_FAILPOINT: &str = "state.complete-removal.after-receipt-publish";
+const EXEC_FAILPOINT: &str = "state.complete-exec.after-receipt-publish";
+
+pub(super) fn hit_failpoint(name: &str) {
+    if !matches!(std::env::var(FAILPOINT_ENV), Ok(value) if value == name) {
+        return;
+    }
+    let ready = std::env::var(READY_ENV).expect("test failpoint ready path");
+    std::fs::write(ready, name).expect("publish test failpoint readiness");
+    loop {
+        thread::park_timeout(Duration::from_secs(60));
+    }
+}
+
+pub(super) fn inject_io_fault(point: &str) -> std::io::Result<()> {
+    let Ok(fault) = std::env::var(IO_FAULT_ENV) else {
+        return Ok(());
+    };
+    let Some(kind) = fault
+        .strip_prefix(point)
+        .and_then(|suffix| suffix.strip_prefix('.'))
+    else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        let raw_error = match kind {
+            "enospc" | "inode-exhaustion" => libc::ENOSPC,
+            "read-only" => libc::EROFS,
+            _ => return Ok(()),
+        };
+        Err(std::io::Error::from_raw_os_error(raw_error))
+    }
+
+    #[cfg(not(unix))]
+    {
+        match kind {
+            "enospc" | "inode-exhaustion" | "read-only" => Err(std::io::Error::other(format!(
+                "injected Runtime state I/O fault: {kind}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+}
+
+fn digest(character: char) -> String {
+    format!("sha256:{}", character.to_string().repeat(64))
+}
+
+fn spec() -> RuntimeUnitSpec {
+    RuntimeUnitSpec {
+        schema: RuntimeUnitSpec::SCHEMA.into(),
+        unit_id: UNIT_ID.into(),
+        generation: 1,
+        class: RuntimeUnitClass::Service,
+        artifact: ArtifactRef {
+            uri: format!(
+                "oci://registry.example/a3s/runtime@sha256:{}",
+                "a".repeat(64)
+            ),
+            digest: digest('a'),
+            media_type: "application/vnd.oci.image.manifest.v1+json".into(),
+        },
+        process: RuntimeProcessSpec {
+            command: vec!["/bin/service".into()],
+            args: Vec::new(),
+            working_directory: None,
+            environment: BTreeMap::new(),
+        },
+        mounts: Vec::new(),
+        secrets: Vec::new(),
+        network: RuntimeNetworkSpec {
+            mode: NetworkMode::None,
+            ports: Vec::new(),
+        },
+        resources: ResourceLimits {
+            cpu_millis: 100,
+            memory_bytes: 64 * 1024 * 1024,
+            pids: 32,
+            ephemeral_storage_bytes: None,
+            execution_timeout_ms: None,
+        },
+        isolation: IsolationLevel::Container,
+        health: None,
+        restart: RestartPolicy::Always,
+        outputs: Vec::new(),
+        semantics_profile_digest: None,
+    }
+}
+
+fn apply_request() -> RuntimeApplyRequest {
+    RuntimeApplyRequest {
+        schema: RuntimeApplyRequest::SCHEMA.into(),
+        request_id: APPLY_ID.into(),
+        deadline_at_ms: Some(NOW + 60_000),
+        spec: spec(),
+    }
+}
+
+fn action(request_id: &str) -> RuntimeActionRequest {
+    RuntimeActionRequest {
+        schema: RuntimeActionRequest::SCHEMA.into(),
+        request_id: request_id.into(),
+        unit_id: UNIT_ID.into(),
+        generation: 1,
+        deadline_at_ms: Some(NOW + 60_000),
+    }
+}
+
+fn exec_request() -> RuntimeExecRequest {
+    RuntimeExecRequest {
+        schema: RuntimeExecRequest::SCHEMA.into(),
+        request_id: EXEC_ID.into(),
+        unit_id: UNIT_ID.into(),
+        generation: 1,
+        command: vec!["/bin/true".into()],
+        timeout_ms: 1_000,
+        deadline_at_ms: Some(NOW + 60_000),
+    }
+}
+
+fn provider_observation(
+    mut observation: RuntimeObservation,
+    state: RuntimeUnitState,
+    observed_at_ms: u64,
+) -> RuntimeObservation {
+    observation.state = state;
+    observation.provider_resource_id = Some(format!("provider/{UNIT_ID}/1"));
+    observation.provider_build = Some("receipt-first-driver/1".into());
+    observation.observed_at_ms = observed_at_ms;
+    observation.started_at_ms = Some(NOW);
+    observation.finished_at_ms = state.is_terminal().then_some(observed_at_ms);
+    observation.health = None;
+    observation.outputs.clear();
+    observation.failure = None;
+    observation
+}
+
+fn prepare_running(store: &FileRuntimeStateStore) -> RuntimeObservation {
+    let request = apply_request();
+    let reservation = store
+        .reserve_apply_sync(request.clone(), NOW)
+        .expect("reserve initial apply");
+    let running = provider_observation(
+        reservation.record.observation,
+        RuntimeUnitState::Running,
+        NOW + 1,
+    );
+    store
+        .update_observation_sync(Some(request.request_id), running.clone())
+        .expect("complete initial apply");
+    running
+}
+
+fn spawn_completion_helper(root: &Path, ready: &Path, operation: &str, failpoint: &str) -> Child {
+    Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("subprocess_receipt_first_completion_helper")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(ROOT_ENV, root)
+        .env(READY_ENV, ready)
+        .env(OPERATION_ENV, operation)
+        .env(FAILPOINT_ENV, failpoint)
+        .spawn()
+        .expect("spawn receipt-first completion helper")
+}
+
+fn kill_at_failpoint(child: &mut Child, ready: &Path, case_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.is_file() {
+        if let Some(status) = child.try_wait().expect("inspect completion helper") {
+            panic!("{case_id}: helper exited before failpoint: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{case_id}: helper did not reach failpoint"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    child.kill().expect("kill completion helper");
+    let status = child.wait().expect("wait for killed completion helper");
+    assert!(!status.success(), "{case_id}: helper was not killed");
+}
+
+fn run_receipt_first_crash(
+    operation: &str,
+    failpoint: &str,
+    prepare: impl FnOnce(&FileRuntimeStateStore),
+    verify: impl FnOnce(&FileRuntimeStateStore),
+) {
+    let directory = tempfile::tempdir().expect("receipt-first state root");
+    let store = FileRuntimeStateStore::new(directory.path());
+    prepare(&store);
+    let ready = directory.path().join(format!("{operation}.ready"));
+    let mut child = spawn_completion_helper(directory.path(), &ready, operation, failpoint);
+    kill_at_failpoint(&mut child, &ready, operation);
+    verify(&FileRuntimeStateStore::new(directory.path()));
+}
+
+#[test]
+fn subprocess_receipt_first_completion_helper() {
+    let Ok(root) = std::env::var(ROOT_ENV) else {
+        return;
+    };
+    let operation = std::env::var(OPERATION_ENV).expect("completion kind");
+    let store = FileRuntimeStateStore::new(PathBuf::from(root));
+    let record = store.load_sync(UNIT_ID).expect("load helper unit");
+    match operation.as_str() {
+        "crash-apply-receipt-first" => {
+            let running =
+                provider_observation(record.observation, RuntimeUnitState::Running, NOW + 1);
+            store
+                .update_observation_sync(Some(APPLY_ID.into()), running)
+                .expect("complete apply");
+        }
+        "crash-stop-receipt-first" => {
+            let stopped =
+                provider_observation(record.observation, RuntimeUnitState::Stopped, NOW + 2);
+            store
+                .update_observation_sync(Some(STOP_ID.into()), stopped)
+                .expect("complete stop");
+        }
+        "crash-remove-receipt-first" => {
+            store
+                .complete_removal_sync(RuntimeRemoval {
+                    schema: RuntimeRemoval::SCHEMA.into(),
+                    request_id: REMOVE_ID.into(),
+                    unit_id: UNIT_ID.into(),
+                    generation: 1,
+                    removed_at_ms: NOW + 3,
+                    already_absent: false,
+                })
+                .expect("complete removal");
+        }
+        "crash-exec-receipt-first" => {
+            let mut refreshed = record.observation;
+            refreshed.observed_at_ms += 1;
+            store
+                .complete_exec_sync(RuntimeExecResult {
+                    schema: RuntimeExecResult::SCHEMA.into(),
+                    request_id: EXEC_ID.into(),
+                    observation: refreshed,
+                    exit_code: 0,
+                    stdout: "ok\n".into(),
+                    stderr: String::new(),
+                    truncated: false,
+                })
+                .expect("complete exec");
+        }
+        other => panic!("unknown receipt-first completion kind {other:?}"),
+    }
+}
+
+#[test]
+fn state_crash_001_receipt_first_process_kills_reconcile_every_result_kind() {
+    run_receipt_first_crash(
+        "crash-apply-receipt-first",
+        OBSERVATION_FAILPOINT,
+        |store| {
+            store
+                .reserve_apply_sync(apply_request(), NOW)
+                .expect("reserve apply");
+        },
+        |store| {
+            assert_eq!(
+                store
+                    .load_sync(UNIT_ID)
+                    .expect("pre-replay unit")
+                    .observation
+                    .state,
+                RuntimeUnitState::Accepted
+            );
+            assert_eq!(
+                store
+                    .load_request_sync(UNIT_ID, APPLY_ID)
+                    .expect("completed apply receipt")
+                    .state,
+                RuntimeRequestState::Completed
+            );
+            let replay = store
+                .reserve_apply_sync(apply_request(), NOW + 2)
+                .expect("replay apply");
+            assert!(!replay.dispatch);
+            assert_eq!(replay.record.observation.state, RuntimeUnitState::Running);
+            assert_eq!(
+                store
+                    .load_sync(UNIT_ID)
+                    .expect("reconciled unit")
+                    .observation,
+                replay.record.observation
+            );
+        },
+    );
+
+    run_receipt_first_crash(
+        "crash-stop-receipt-first",
+        OBSERVATION_FAILPOINT,
+        |store| {
+            prepare_running(store);
+            store
+                .reserve_action_sync(RuntimeActionKind::Stop, action(STOP_ID), NOW + 1)
+                .expect("reserve stop");
+        },
+        |store| {
+            assert_eq!(
+                store
+                    .load_sync(UNIT_ID)
+                    .expect("pre-replay unit")
+                    .observation
+                    .state,
+                RuntimeUnitState::Running
+            );
+            let replay = store
+                .reserve_action_sync(RuntimeActionKind::Stop, action(STOP_ID), NOW + 3)
+                .expect("replay stop");
+            assert!(!replay.dispatch);
+            assert_eq!(replay.record.observation.state, RuntimeUnitState::Stopped);
+        },
+    );
+
+    run_receipt_first_crash(
+        "crash-remove-receipt-first",
+        REMOVAL_FAILPOINT,
+        |store| {
+            prepare_running(store);
+            store
+                .reserve_action_sync(RuntimeActionKind::Remove, action(REMOVE_ID), NOW + 1)
+                .expect("reserve removal");
+        },
+        |store| {
+            assert!(store
+                .load_sync(UNIT_ID)
+                .expect("pre-replay unit")
+                .removed_at_ms
+                .is_none());
+            let replay = store
+                .reserve_action_sync(RuntimeActionKind::Remove, action(REMOVE_ID), NOW + 4)
+                .expect("replay removal");
+            assert!(!replay.dispatch);
+            assert_eq!(replay.record.removed_at_ms, Some(NOW + 3));
+        },
+    );
+
+    run_receipt_first_crash(
+        "crash-exec-receipt-first",
+        EXEC_FAILPOINT,
+        |store| {
+            prepare_running(store);
+            store
+                .reserve_exec_sync(exec_request(), NOW + 1)
+                .expect("reserve exec");
+        },
+        |store| {
+            let before = store
+                .load_sync(UNIT_ID)
+                .expect("pre-replay unit")
+                .observation
+                .observed_at_ms;
+            let replay = store
+                .reserve_exec_sync(exec_request(), NOW + 2)
+                .expect("replay exec");
+            assert!(!replay.dispatch);
+            assert!(replay.record.observation.observed_at_ms > before);
+            assert_eq!(
+                replay.receipt.state,
+                RuntimeRequestState::Completed,
+                "exec result must remain durable after process kill"
+            );
+        },
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn state_fs_001_hard_linked_lock_record_and_receipt_files_fail_closed() {
+    let directory = tempfile::tempdir().expect("hard-link state root");
+    let store = FileRuntimeStateStore::new(directory.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve hard-link fixture");
+    let key = storage_key(UNIT_ID);
+
+    let state_lock = directory.path().join("locks").join(format!("{key}.lock"));
+    let state_lock_alias = directory.path().join("state-lock.alias");
+    std::fs::hard_link(&state_lock, &state_lock_alias).expect("hard-link state lock");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+    std::fs::remove_file(state_lock_alias).expect("remove state-lock alias");
+
+    let record = store.record_path(UNIT_ID, false).expect("record path");
+    let record_alias = directory.path().join("record.alias");
+    std::fs::hard_link(&record, &record_alias).expect("hard-link record");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+    std::fs::remove_file(record_alias).expect("remove record alias");
+
+    let receipt = store
+        .request_path(UNIT_ID, APPLY_ID, false)
+        .expect("receipt path");
+    let receipt_alias = directory.path().join("receipt.alias");
+    std::fs::hard_link(&receipt, &receipt_alias).expect("hard-link receipt");
+    assert!(matches!(
+        store.load_request_sync(UNIT_ID, APPLY_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+    std::fs::remove_file(receipt_alias).expect("remove receipt alias");
+
+    drop(
+        store
+            .acquire_operation_lease_sync(UNIT_ID)
+            .expect("create operation lock"),
+    );
+    let operation_lock = directory
+        .path()
+        .join("operations")
+        .join(format!("{key}.lock"));
+    let operation_alias = directory.path().join("operation-lock.alias");
+    std::fs::hard_link(&operation_lock, &operation_alias).expect("hard-link operation lock");
+    assert!(matches!(
+        store.acquire_operation_lease_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn state_fs_002_corrupt_permission_and_non_regular_boundaries_fail_closed() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+
+    let truncated = tempfile::tempdir().expect("truncated state root");
+    let store = FileRuntimeStateStore::new(truncated.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve truncated fixture");
+    let record = store.record_path(UNIT_ID, false).expect("record path");
+    std::fs::write(&record, b"{").expect("truncate record");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let invalid_utf8 = tempfile::tempdir().expect("invalid UTF-8 state root");
+    let store = FileRuntimeStateStore::new(invalid_utf8.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve invalid UTF-8 fixture");
+    let receipt = store
+        .request_path(UNIT_ID, APPLY_ID, false)
+        .expect("receipt path");
+    std::fs::write(&receipt, [0xff]).expect("corrupt receipt encoding");
+    assert!(matches!(
+        store.load_request_sync(UNIT_ID, APPLY_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let permissions = tempfile::tempdir().expect("permission state root");
+    let store = FileRuntimeStateStore::new(permissions.path());
+    store
+        .reserve_apply_sync(apply_request(), NOW)
+        .expect("reserve permission fixture");
+    let record = store.record_path(UNIT_ID, false).expect("record path");
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o644))
+        .expect("relax record permissions");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let non_regular = tempfile::tempdir().expect("non-regular state root");
+    let store = FileRuntimeStateStore::new(non_regular.path());
+    let record = store.record_path(UNIT_ID, true).expect("record path");
+    let _socket = UnixListener::bind(&record).expect("bind record socket");
+    assert!(matches!(
+        store.load_sync(UNIT_ID),
+        Err(RuntimeError::Protocol(_))
+    ));
+}
+
+fn spawn_atomic_crash_helper(root: &Path, ready: &Path, failpoint: &str) -> Child {
+    Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("subprocess_atomic_write_helper")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(ROOT_ENV, root)
+        .env(READY_ENV, ready)
+        .env(FAILPOINT_ENV, failpoint)
+        .spawn()
+        .expect("spawn atomic-write helper")
+}
+
+fn spawn_io_fault_helper(root: &Path, result: &Path, request_id: &str, fault: &str) -> Child {
+    Command::new(std::env::current_exe().expect("current test executable"))
+        .arg("subprocess_atomic_io_fault_helper")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(ROOT_ENV, root)
+        .env(READY_ENV, result)
+        .env(OPERATION_ENV, request_id)
+        .env(IO_FAULT_ENV, fault)
+        .spawn()
+        .expect("spawn atomic I/O-fault helper")
+}
+
+fn wait_for_success(child: &mut Child, case_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().expect("inspect state helper") {
+            assert!(status.success(), "{case_id}: helper failed: {status}");
+            return;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill timed-out state helper");
+            child.wait().expect("wait for timed-out state helper");
+            panic!("{case_id}: helper timed out");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn staging_files(root: &Path) -> Vec<PathBuf> {
+    let mut directories = vec![root.to_path_buf()];
+    let mut staging = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).expect("scan state test directory") {
+            let entry = entry.expect("read state test entry");
+            let path = entry.path();
+            let file_type = entry.file_type().expect("inspect state test entry");
+            if file_type.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(".tmp")
+                || (name.starts_with(".a3s-runtime-") && name.ends_with(".tmp"))
+            {
+                staging.push(path);
+            }
+        }
+    }
+    staging.sort();
+    staging
+}
+
+#[test]
+fn subprocess_atomic_write_helper() {
+    let Ok(root) = std::env::var(ROOT_ENV) else {
+        return;
+    };
+    let store = FileRuntimeStateStore::new(PathBuf::from(root));
+    let mut record = store.load_sync(UNIT_ID).expect("load atomic-write unit");
+    record.observation.observed_at_ms = NOW + 2;
+    record
+        .validate()
+        .expect("validate atomic-write replacement");
+    let path = store.record_path(UNIT_ID, false).expect("record path");
+    atomic_write(&path, &record, "state record").expect("rewrite state record");
+}
+
+#[test]
+fn subprocess_atomic_io_fault_helper() {
+    let Ok(root) = std::env::var(ROOT_ENV) else {
+        return;
+    };
+    let request_id = std::env::var(OPERATION_ENV).expect("fault request ID");
+    let result = PathBuf::from(std::env::var(READY_ENV).expect("fault result path"));
+    let store = FileRuntimeStateStore::new(PathBuf::from(root));
+    match store.reserve_action_sync(RuntimeActionKind::Stop, action(&request_id), NOW + 2) {
+        Err(RuntimeError::Transport(error)) => {
+            std::fs::write(result, error).expect("write injected I/O result");
+        }
+        other => panic!("injected state I/O fault returned {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn state_crash_002_atomic_write_process_kills_preserve_a_complete_record() {
+    let cases = [
+        ("state.atomic-write.after-create", false),
+        ("state.atomic-write.after-partial-write", false),
+        ("state.atomic-write.after-complete-write", false),
+        ("state.atomic-write.after-file-sync", false),
+        ("state.atomic-write.after-permissions", false),
+        ("state.atomic-write.after-publish", true),
+        ("state.atomic-write.after-directory-sync", true),
+    ];
+
+    for (failpoint, published) in cases {
+        let directory = tempfile::tempdir().expect("atomic-write state root");
+        let store = FileRuntimeStateStore::new(directory.path());
+        prepare_running(&store);
+        let ready = directory.path().join(format!("{failpoint}.ready"));
+        let mut child = spawn_atomic_crash_helper(directory.path(), &ready, failpoint);
+        kill_at_failpoint(&mut child, &ready, failpoint);
+
+        let record = store.load_sync(UNIT_ID).expect("load post-crash record");
+        assert_eq!(
+            record.observation.observed_at_ms,
+            if published { NOW + 2 } else { NOW + 1 },
+            "{failpoint}: unexpected published state"
+        );
+        let staged = staging_files(directory.path());
+        if published {
+            assert!(
+                staged.is_empty(),
+                "{failpoint}: published state left a staging file: {staged:?}"
+            );
+        } else {
+            assert!(
+                !staged.is_empty(),
+                "{failpoint}: pre-publish crash did not leave a recoverable staging file"
+            );
+        }
+
+        let mut recovered = record;
+        recovered.observation.observed_at_ms = NOW + 3;
+        recovered.validate().expect("validate recovered record");
+        let path = store.record_path(UNIT_ID, false).expect("record path");
+        atomic_write(&path, &recovered, "state record").expect("recover atomic state write");
+        assert_eq!(
+            store
+                .load_sync(UNIT_ID)
+                .expect("load recovered state")
+                .observation
+                .observed_at_ms,
+            NOW + 3
+        );
+        assert!(
+            staging_files(directory.path()).is_empty(),
+            "{failpoint}: replay left a stale staging file"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn state_fs_003_storage_faults_preserve_prior_state_and_reject_dispatch() {
+    let cases = [
+        (
+            "STATE-FS-003-read-only",
+            "state.atomic-write.before-create.read-only",
+        ),
+        (
+            "STATE-FS-003-enospc",
+            "state.atomic-write.before-create.enospc",
+        ),
+        (
+            "STATE-FS-003-inode-exhaustion",
+            "state.atomic-write.before-create.inode-exhaustion",
+        ),
+    ];
+
+    for (index, (case_id, fault)) in cases.into_iter().enumerate() {
+        let directory = tempfile::tempdir().expect("storage-fault state root");
+        let store = FileRuntimeStateStore::new(directory.path());
+        let running = prepare_running(&store);
+        let request_id = format!("storage-fault-{index}");
+        let result = directory.path().join(format!("{request_id}.result"));
+        let mut child = spawn_io_fault_helper(directory.path(), &result, &request_id, fault);
+        wait_for_success(&mut child, case_id);
+
+        assert!(
+            result.is_file(),
+            "{case_id}: helper did not report the fault"
+        );
+        assert_eq!(
+            store
+                .load_sync(UNIT_ID)
+                .expect("load prior record")
+                .observation,
+            running,
+            "{case_id}: failed reservation changed the durable record"
+        );
+        assert!(matches!(
+            store.load_request_sync(UNIT_ID, &request_id),
+            Err(RuntimeError::RequestNotFound { .. })
+        ));
+        assert!(
+            staging_files(directory.path()).is_empty(),
+            "{case_id}: failed reservation left a staging file"
+        );
+    }
+}

@@ -1,0 +1,60 @@
+{
+  "schema": "a3s.runtime.unit-record.v2",
+  "spec": {
+    "schema": "a3s.runtime.unit-spec.v2",
+    "unit_id": "golden-task",
+    "generation": 7,
+    "class": "task",
+    "artifact": {
+      "uri": "oci://registry.example/a3s/golden@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "media_type": "application/vnd.oci.image.manifest.v1+json"
+    },
+    "process": {
+      "command": [],
+      "args": [],
+      "working_directory": null,
+      "environment": {}
+    },
+    "mounts": [],
+    "secrets": [],
+    "network": {
+      "mode": "outbound",
+      "ports": []
+    },
+    "resources": {
+      "cpu_millis": 500,
+      "memory_bytes": 134217728,
+      "pids": 128,
+      "ephemeral_storage_bytes": null,
+      "execution_timeout_ms": 60000
+    },
+    "isolation": "container",
+    "health": null,
+    "restart": {
+      "kind": "never"
+    },
+    "outputs": [],
+    "semantics_profile_digest": null
+  },
+  "observation": {
+    "schema": "a3s.runtime.observation.v2",
+    "unit_id": "golden-task",
+    "generation": 7,
+    "spec_digest": "sha256:3309c80ee072c47311be878a7fcde9818e484e9d186fa1c6eb78033fe5ef4d11",
+    "class": "task",
+    "state": "accepted",
+    "provider_resource_id": null,
+    "provider_build": null,
+    "observed_at_ms": 100000,
+    "started_at_ms": null,
+    "finished_at_ms": null,
+    "health": null,
+    "outputs": [],
+    "usage": null,
+    "evidence": null,
+    "provider_attestation": null,
+    "failure": null
+  },
+  "removed_at_ms": null
+}

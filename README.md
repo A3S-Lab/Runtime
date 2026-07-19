@@ -109,7 +109,7 @@ The `RuntimeClient` contract exposes:
 | `stop` | Stop the active generation without deleting durable identity |
 | `remove` | Remove the provider resource and persist an absence tombstone |
 | `logs` | Read strictly ordered, cursor-addressed log chunks |
-| `exec` | Execute a bounded command against the exact active generation |
+| `exec` | Execute one bounded, buffered command against the exact active generation |
 
 Each mutating request carries its own request ID and optional absolute deadline.
 An exact retry returns or reconstructs the same logical result. Reusing a
@@ -121,6 +121,13 @@ reservation, Runtime persists the smaller of `started_at + timeout_ms` and the
 optional caller deadline. `RuntimeDriver::exec` receives that effective
 absolute deadline in `deadline_at_ms`, and every pending replay receives the
 same value, so retrying cannot restart or extend the execution window.
+
+`exec` is a unary, non-interactive operation. Its single result contains an
+exit code, separate buffered stdout and stderr of at most 16 MiB each, and a
+truncation indicator. `RuntimeFeature::Exec` does not advertise stdin, PTY,
+terminal resize, signals, incremental output, or reconnectable sessions.
+Interactive streaming must not be emulated with log cursors or repeated unary
+requests.
 
 ## Capabilities
 
@@ -246,7 +253,9 @@ provider driver and external runtime
 
 See [ADR 0001](docs/adr/0001-general-runtime-contract.md) for the general
 ownership model, [ADR 0002](docs/adr/0002-complete-protocol-and-operation-semantics.md)
-for the completed protocol and operation semantics, and the
+for the completed protocol and operation semantics,
+[ADR 0003](docs/adr/0003-keep-interactive-streaming-exec-outside-v0.2-core.md)
+for the bounded unary exec boundary, and the
 [implementation plan](docs/implementation-plan.md) for the dependency-ordered
 delivery tasks.
 

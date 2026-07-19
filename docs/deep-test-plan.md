@@ -107,13 +107,14 @@ These invariants are the basis of every test oracle.
 - A successful suite leaves no provider resources, state roots, ports, mounts,
   processes, or test volumes outside its declared retention policy.
 
-## 5. Contract Decisions Required Before P0 Closes
+## 5. Contract Decisions and P0 Oracles
 
-Tests must not encode accidental behavior. The maintainers must resolve and
-record the following decisions in an ADR or contract documentation before the
-corresponding release gate is enabled.
+Tests must not encode accidental behavior. ADR 0002 resolves the lifecycle and
+operation decisions below, and ADR 0003 resolves the interactive streaming
+exec boundary. The table retains the motivating risks and required release
+oracles.
 
-| Decision | Current risk | Required test oracle |
+| Decision | Motivating risk | Required test oracle |
 | --- | --- | --- |
 | Wire schema boundary | Top-level log, exec, and inspection types do not all carry schema identifiers although the README says all wire records do | Define which types cross a versioned boundary; require a schema on each top-level wire record or narrow the compatibility claim |
 | Provider identity binding | Capabilities carry a string validated differently from `ProviderId`, and the managed client does not bind it to a selected factory | Use one grammar and prove reported, registered, and observed provider identities cannot disagree |
@@ -124,6 +125,7 @@ corresponding release gate is enabled.
 | Task output fulfillment | A Task may request outputs, but capabilities do not express output collection and the current Docker driver returns none | Make output support mandatory or capability-gated; prove every requested output is collected, bounded, and digest-bound before convergence |
 | Logs by state | Current-generation logs may be useful after Task completion or Service stop | Define allowed states, removal behavior, cursor retention, and provider-loss behavior |
 | Exec by state | Generation matching alone does not prove a runnable unit | Require `running`, or explicitly delegate a narrower rule to providers |
+| Bidirectional streaming exec | A disconnected stream can leave unbounded buffers, duplicate stdin, unacknowledged output, leaked sessions, or conflicting terminal owners | Runtime v0.2 exposes only bounded unary exec; a distinct versioned optional capability must prove backpressure, ordering, half-close, cancellation, deadline, reconnect, terminal ownership, and restart cleanup before publication |
 | Stop after loss | A provider may be absent while durable state is `unknown` | Define whether stop returns `unknown`, is idempotent success, or requires recovery |
 | Receipt retention | Records reject more than 10,000 receipts but have no retention/compaction policy | Define bounded retention without breaking exact replay guarantees |
 | Deadline semantics | Deadlines are checked only before dispatch | Define whether drivers receive remaining budget and how late results are persisted |
@@ -328,7 +330,7 @@ fixtures and destructive cleanup.
 | Health | Every advertised probe kind, threshold transitions, timeout, start period, unhealthy exit |
 | Resources | Every advertised control verified by provider configuration and workload behavior |
 | Logs | Stream filtering, total order, cursor resume, same-timestamp records, limit, rotation gap, retention, large records |
-| Exec | State policy, timeout, exit code, output bounds, truncation, identity and generation binding |
+| Exec | Bounded unary state policy, timeout, exit code, output bounds, truncation, identity and generation binding |
 | Security | Digest pinning, label/metadata tamper, namespace separation, secret handling, least privilege, hostile input |
 | Evidence | Usage, evidence claims, profile binding, attestation validity for each advertised optional feature |
 

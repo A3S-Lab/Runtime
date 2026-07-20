@@ -2,10 +2,11 @@
 
 ## Goal
 
-Implement the complete contract accepted by ADR 0001 and ADR 0002, certify all
-advertised provider capabilities, and satisfy the release gates in the deep
-test plan. Work is ordered by dependency; a later task cannot claim completion
-from mocks when its required real-provider evidence is absent.
+Implement the complete contract accepted by ADR 0001 and ADR 0002, preserve
+the bounded unary exec boundary accepted by ADR 0003, certify all advertised
+provider capabilities, and satisfy the release gates in the deep test plan.
+Work is ordered by dependency; a later task cannot claim completion from mocks
+when its required real-provider evidence is absent.
 
 ## Working rules
 
@@ -30,7 +31,7 @@ from mocks when its required real-provider evidence is absent.
 | R05 | Bound deadlines across queue and dispatch | R04 | Deterministic clock tests for pre-lock, post-lock, provider timeout, and pending replay |
 | R06 | Add per-unit cross-process operation leases | R04 | Same-unit race serialization and different-unit parallelism in independent processes |
 | R07 | Replace embedded receipts with request journal v2 | R06 | Atomic receipt tests, restart replay, 10,001 requests, permissions, corruption handling |
-| R08 | Make exec durably idempotent | R07 | Exact replay executes once; conflict, cancellation, timeout, and large-output tests |
+| R08 | Make bounded unary exec durably idempotent | R07 | Exact replay executes once; conflict, cancellation, timeout, and large-output tests |
 | R09 | Enforce generation reconciliation | R06 | N to N+1 success/failure/crash tests with exactly one final provider resource |
 | R10 | Build deterministic fault driver and transition generator | R01-R09 | Every state edge and provider boundary has a stable case ID and oracle |
 | R11 | Split shared conformance into capability profiles | R10 | Base/Recovery mandatory; optional advertised profiles auto-run and cannot silently skip |
@@ -71,7 +72,7 @@ Deliverables:
 
 - independent operation and record locks;
 - v2 unit directory and request journal;
-- durable exec receipts;
+- durable bounded unary exec receipts;
 - generation reconciliation contract and deterministic provider model;
 - process-level crash/failpoint harness;
 - transition matrix and race matrix;
@@ -80,6 +81,11 @@ Deliverables:
 
 Exit gate: every mutating crash point can replay after a new process starts,
 with valid state and no untracked provider resource.
+
+ADR 0003 excludes interactive stdin, PTY, terminal resize, signals,
+incremental output, and reconnectable exec sessions from this plan. A future
+interactive protocol requires a distinct versioned capability and its own
+dependency-ordered implementation and conformance work.
 
 ### Package C: Shared certification (`R11`-`R12`)
 

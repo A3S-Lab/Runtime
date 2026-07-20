@@ -17,7 +17,8 @@ pub use observation::{
 pub use process::{RuntimeProcessSpec, SecretReference, SecretTarget};
 pub use protocol::{
     RuntimeActionRequest, RuntimeApplyRequest, RuntimeExecRequest, RuntimeExecResult,
-    RuntimeLogChunk, RuntimeLogQuery, RuntimeLogStream, RuntimeRemoval,
+    RuntimeLogChunk, RuntimeLogDiscontinuityReason, RuntimeLogQuery, RuntimeLogStream,
+    RuntimeRemoval,
 };
 pub use resource::{IsolationLevel, ResourceLimits};
 pub use unit::{

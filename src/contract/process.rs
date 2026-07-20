@@ -61,6 +61,7 @@ pub(crate) fn validate_environment_name(value: &str) -> Result<(), String> {
 pub enum SecretTarget {
     Environment { variable: String },
     File { path: String, mode: u32 },
+    RegistryCredential,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +87,7 @@ impl SecretReference {
                 }
                 Ok(())
             }
+            SecretTarget::RegistryCredential => Ok(()),
         }
     }
 }

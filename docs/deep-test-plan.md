@@ -198,7 +198,7 @@ schema review; snapshot acceptance is never automatic.
 | --- | --- |
 | `SPEC-PROCESS-*` | Entrypoint fallback, command/argument counts and sizes, working directory, environment names/values, and deterministic map order |
 | `SPEC-MOUNT-*` | Artifact, volume, and tmpfs sources; read-only behavior; zero/overflow size; duplicate names and targets; cross-kind collisions |
-| `SPEC-SECRET-*` | Opaque references, environment/file targets, file modes, duplicate names/targets, collision with process environment and mounts, and non-disclosure |
+| `SPEC-SECRET-*` | Opaque references, environment/file/registry-credential targets, file modes, duplicate names/targets, collision with process environment and mounts, and non-disclosure |
 | `SPEC-NET-*` | None/outbound/service modes, TCP/UDP, zero port, duplicate name/socket, 64-port boundary, and service-only publication |
 | `SPEC-HEALTH-*` | HTTP/TCP/command probes, named-port binding, status ranges, path validation, timing relationships, start period, and thresholds |
 | `SPEC-RESOURCE-*` | CPU, memory, PIDs, optional ephemeral storage, Task timeout, zero values, numeric maxima, and provider conversion overflow |

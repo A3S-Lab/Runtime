@@ -427,4 +427,26 @@ mod tests {
         };
         assert!(service.validate().is_err());
     }
+
+    #[test]
+    fn registry_credential_is_a_typed_unique_secret_target() {
+        let mut service = service();
+        service.secrets.push(SecretReference {
+            name: "registry".into(),
+            reference: "secret://registry/7".into(),
+            target: super::super::SecretTarget::RegistryCredential,
+        });
+        service.validate().expect("registry credential");
+        assert_eq!(
+            serde_json::to_value(&service.secrets[0].target).expect("target JSON"),
+            serde_json::json!({"kind": "registry_credential"})
+        );
+
+        service.secrets.push(SecretReference {
+            name: "other-registry".into(),
+            reference: "secret://registry/8".into(),
+            target: super::super::SecretTarget::RegistryCredential,
+        });
+        assert!(service.validate().is_err());
+    }
 }

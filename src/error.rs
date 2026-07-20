@@ -1,3 +1,4 @@
+use crate::contract::RuntimeLogDiscontinuityReason;
 use thiserror::Error;
 
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
@@ -30,6 +31,15 @@ pub enum RuntimeError {
     ProviderUnavailable(String),
     #[error("Runtime transport failed: {0}")]
     Transport(String),
+    #[error(
+        "Runtime log source for unit {unit_id:?} generation {generation} is discontinuous: {reason:?}"
+    )]
+    LogDiscontinuity {
+        unit_id: String,
+        generation: u64,
+        cursor: Option<String>,
+        reason: RuntimeLogDiscontinuityReason,
+    },
     #[error("Runtime protocol failed: {0}")]
     Protocol(String),
 }

@@ -103,6 +103,13 @@ pub enum RuntimeLogStream {
     Stderr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLogDiscontinuityReason {
+    CursorLost,
+    SourceDisconnected,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeLogQuery {
@@ -248,4 +255,23 @@ fn canonical_digest<T: Serialize>(value: &T, valid: Result<(), String>) -> Resul
     let bytes = serde_json::to_vec(value)
         .map_err(|error| format!("could not encode Runtime request: {error}"))?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_discontinuity_reasons_have_stable_wire_names() {
+        assert_eq!(
+            serde_json::to_string(&RuntimeLogDiscontinuityReason::CursorLost)
+                .expect("serialize cursor loss"),
+            "\"cursor_lost\""
+        );
+        assert_eq!(
+            serde_json::to_string(&RuntimeLogDiscontinuityReason::SourceDisconnected)
+                .expect("serialize source disconnect"),
+            "\"source_disconnected\""
+        );
+    }
 }

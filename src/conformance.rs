@@ -213,9 +213,10 @@ pub async fn verify_runtime_provider(
     task.validate_against(&case.task_apply.spec)
         .map_err(RuntimeError::Protocol)?;
     if !task.converges(&case.task_apply.spec) {
-        return Err(RuntimeError::Protocol(
-            "conformance Task did not reach succeeded".into(),
-        ));
+        return Err(RuntimeError::Protocol(format!(
+            "conformance Task did not reach succeeded: state={:?}, provider_resource_id={:?}, failure={:?}",
+            task.state, task.provider_resource_id, task.failure
+        )));
     }
     require_equal(
         "duplicate Task apply",
@@ -241,9 +242,10 @@ pub async fn verify_runtime_provider(
         .validate_against(&case.service_apply.spec)
         .map_err(RuntimeError::Protocol)?;
     if !service.converges(&case.service_apply.spec) {
-        return Err(RuntimeError::Protocol(
-            "conformance Service did not reach running and healthy".into(),
-        ));
+        return Err(RuntimeError::Protocol(format!(
+            "conformance Service did not reach running and healthy: state={:?}, provider_resource_id={:?}, health={:?}, failure={:?}",
+            service.state, service.provider_resource_id, service.health, service.failure
+        )));
     }
     require_equal(
         "duplicate Service apply",
@@ -257,9 +259,12 @@ pub async fn verify_runtime_provider(
         .map_err(RuntimeError::Protocol)?;
     let stopped_service = require_found("stop Service", client.stop(&case.service_stop).await?)?;
     if stopped_service.state != RuntimeUnitState::Stopped {
-        return Err(RuntimeError::Protocol(
-            "conformance Service stop did not reach stopped".into(),
-        ));
+        return Err(RuntimeError::Protocol(format!(
+            "conformance Service stop did not reach stopped: state={:?}, provider_resource_id={:?}, failure={:?}",
+            stopped_service.state,
+            stopped_service.provider_resource_id,
+            stopped_service.failure
+        )));
     }
     let duplicate_stop = require_found(
         "duplicate Service stop",
@@ -326,9 +331,13 @@ pub async fn verify_runtime_base(
         .validate_against(&case.generation_apply.spec)
         .map_err(RuntimeError::Protocol)?;
     if !generation.converges(&case.generation_apply.spec) {
-        return Err(RuntimeError::Protocol(
-            "Base generation fixture did not converge".into(),
-        ));
+        return Err(RuntimeError::Protocol(format!(
+            "Base generation fixture did not converge: state={:?}, provider_resource_id={:?}, health={:?}, failure={:?}",
+            generation.state,
+            generation.provider_resource_id,
+            generation.health,
+            generation.failure
+        )));
     }
     require_equal(
         "duplicate generation apply",
@@ -383,7 +392,8 @@ async fn verify_failed_task(
         .map_err(RuntimeError::Protocol)?;
     if observation.state != RuntimeUnitState::Failed {
         return Err(RuntimeError::Protocol(format!(
-            "conformance {label} did not reach failed"
+            "conformance {label} did not reach failed: state={:?}, provider_resource_id={:?}, failure={:?}",
+            observation.state, observation.provider_resource_id, observation.failure
         )));
     }
     require_equal(

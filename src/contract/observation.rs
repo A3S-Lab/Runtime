@@ -243,6 +243,13 @@ impl RuntimeObservation {
         {
             return Err("Runtime observation does not match the unit specification".into());
         }
+        if self.evidence.as_ref().is_some_and(|evidence| {
+            evidence.semantics_profile_digest != spec.semantics_profile_digest
+        }) {
+            return Err(
+                "Runtime evidence semantics profile does not match the unit specification".into(),
+            );
+        }
         if self.state == RuntimeUnitState::Succeeded {
             if self.outputs.len() != spec.outputs.len() {
                 return Err("succeeded Task did not report the exact requested outputs".into());

@@ -398,6 +398,31 @@ can claim Runtime compatibility. Product-specific scoring, privacy, and
 scheduling remain outside the Runtime crate, but their projection digest and
 generic resource/isolation requirements are in scope.
 
+### 11.1 Modern MCP Service consumer profile
+
+The Runtime `MCP0.2` claim is an optional consumer profile, not a new provider
+capability or Runtime protocol. Its pinned real-service fixture must prove:
+
+- one modern MCP replica projects to an ordinary `UnitClass::Service` with
+  `NetworkMode::Service`, one declared TCP port, and an immutable
+  `semantics_profile_digest`;
+- the exact typed endpoint from the running observation reaches the fixture's
+  `server/discover` response without a consumer-created listener or endpoint
+  registry;
+- the black-box response identifies the pinned fixture and modern
+  `2026-07-28` support, while MCP header, JSON-RPC, and discovery conformance
+  assertions remain owned by the joint Gateway/Cloud harness;
+- agent loss, provider restart, host restart, external deletion, and exact
+  request replay converge to one provider resource for one Unit generation;
+- generation replacement never republishes a stale endpoint or profile digest;
+- two or more replicas have distinct Unit IDs, provider resources, listener
+  sockets, and generation-bound observations; and
+- stop and remove restore the provider inventory and listener set to their
+  pre-test baselines.
+
+The Runtime test must not parse an MCP product profile, synthesize a
+`server/discover` result, authorize a request, or select a replica.
+
 ## 12. Fault Injection Matrix
 
 | Fault | Expected result |
@@ -607,6 +632,19 @@ Exit: all correctness, regression, leak, and soak gates in Section 14 pass.
 Exit: the provider matrix is evidence-backed for the release SHAs, and the
 production canary bundle proves zero leaked resources and no safety stop.
 
+### P5: Hosted MCP Service consumer certification
+
+- Accept or supersede ADR 0005 before implementation.
+- Pin one modern MCP fixture, its immutable image digest, profile digest, and
+  expected discovery identity.
+- Run the Section 11.1 matrix on real A3S Box infrastructure.
+- Run the joint Cloud `MCP0.5` route, failure, recovery, and cleanup gate at
+  exact repository revisions; retain its Runtime evidence for the later
+  multi-node `MCP0.6` gate.
+
+Exit: Runtime can truthfully claim an MCP-ready Service substrate while MCP
+protocol handling and product desired state remain outside Runtime core.
+
 ## 18. Release Gates
 
 A Runtime release is blocked unless:
@@ -622,6 +660,8 @@ A Runtime release is blocked unless:
    release level required by the change risk.
 8. Provider inventory after the final run matches the pre-run baseline.
 9. The evidence bundle is complete, redacted, checksummed, and reviewable.
+10. A release claiming the MCP-ready Service profile passes P5 at pinned
+    Runtime, Box, Cloud, Gateway, and fixture revisions.
 
 Passing a mock-only suite, an environment-gated test that did not execute, or a
 narrow provider smoke test is not sufficient evidence for a release claim.

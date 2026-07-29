@@ -264,12 +264,16 @@ A3S Runtime intentionally does not own:
 - interactive streaming exec or terminal-session durability.
 
 These boundaries keep the core contract portable and make provider behavior
-testable. See the accepted design decisions for the complete reasoning:
+testable. See the design decisions and delivery plans for the complete
+reasoning:
 
 - [ADR 0001 — General Task and Service contract](docs/adr/0001-general-runtime-contract.md)
 - [ADR 0002 — Protocol and operation semantics](docs/adr/0002-complete-protocol-and-operation-semantics.md)
 - [ADR 0003 — Interactive streaming exec stays outside v0.2](docs/adr/0003-keep-interactive-streaming-exec-outside-v0.2-core.md)
 - [ADR 0004 — Typed Service endpoints and protocol capabilities](docs/adr/0004-type-service-endpoints-and-protocol-capabilities.md)
+- [ADR 0005 — Host modern stateless MCP as a Service profile (proposed)](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
+- [Roadmap](ROADMAP.md)
+- [Implementation plan](docs/implementation-plan.md)
 - [Deep test plan](docs/deep-test-plan.md)
 
 ## Development

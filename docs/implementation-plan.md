@@ -3,10 +3,14 @@
 ## Goal
 
 Implement the complete contract accepted by ADR 0001 and ADR 0002, preserve
-the bounded unary exec boundary accepted by ADR 0003, certify all advertised
-provider capabilities, and satisfy the release gates in the deep test plan.
-Work is ordered by dependency; a later task cannot claim completion from mocks
-when its required real-provider evidence is absent.
+the bounded unary exec boundary accepted by ADR 0003, preserve the typed
+Service endpoint ownership accepted by ADR 0004, certify all advertised
+provider capabilities, and satisfy the release gates in the deep test plan. In
+parallel with that foundation, freeze the proposed ADR 0005 boundary; certify
+the modern MCP Service profile only after its required provider gates pass and
+without importing MCP protocol or product fields into Runtime core. Work is
+ordered by dependency; a later task cannot claim completion from mocks when
+its required real-provider evidence is absent.
 
 ## Working rules
 
@@ -46,6 +50,12 @@ when its required real-provider evidence is absent.
 | R20 | Add churn, fault, and 24/72-hour soak automation | R13-R19 | Evidence bundles prove zero resource/FD/state growth and all stop conditions |
 | R21 | Run bounded A3S OS production canary | R12-R20 | Git-only exact-SHA canary passes with complete cleanup and no safety stop |
 | R22 | Perform release completion audit | R01-R21 | Every deep-test-plan release gate maps to authoritative passing evidence |
+| R23 | Freeze the modern MCP Service-profile boundary | R00 | ADR 0005 accepted or explicitly superseded; no MCP fields enter the Runtime wire contract |
+| R24 | Define the MCP-ready Service consumer profile and fixture manifest | R23 | Existing generic capabilities map to stable case IDs and one pinned black-box fixture |
+| R25 | Certify one real Box-hosted modern MCP Service | R17, R24 | Typed endpoint reaches `server/discover`; exact profile digest and provider inventory evidence pass |
+| R26 | Certify MCP Service recovery and replica isolation | R25 | Generation replacement, process/host loss, external deletion, distinct replica IDs, endpoint cleanup, and zero leaks pass |
+| R27 | Run the Cloud and Gateway compatibility gate | R26 | Pinned Runtime/Box/Cloud/Gateway revisions consume only exact typed observations and one profile digest |
+| R28 | Audit the Runtime `MCP0.2` claim | R22-R27 | Every Runtime-owned `MCP0.2` criterion maps to reviewable exact-SHA evidence |
 
 ## Work packages
 
@@ -146,6 +156,34 @@ Deliverables:
 Exit gate: all nine release gates in the deep test plan have direct,
 reviewable, exact-SHA evidence.
 
+### Package G: Modern MCP Service substrate (`R23`-`R28`)
+
+Checkpoint (2026-07-30): the `R23`/`R24` foundation is implemented. ADR 0005,
+the canonical consumer fixture, exact semantics-profile binding, typed
+endpoint/generation acceptance, and stale evidence rejection pass focused
+tests without adding MCP protocol fields to Runtime core. `R25` is next and
+requires production-equivalent Linux plus the real A3S Box adapter; that
+external evidence cannot be replaced by the current Windows fixture.
+
+Deliverables:
+
+- an accepted profile boundary that maps every hosted MCP replica to an
+  ordinary Runtime Service;
+- an explicit prohibition on MCP product fields, JSON-RPC parsing, routing,
+  authorization, and protocol sessions in Runtime core;
+- a canonical fixture manifest binding the MCP server image, Service
+  specification, semantics profile digest, declared TCP port, health probe,
+  and expected endpoint evidence;
+- real A3S Box apply, inspect, health, logs, stop, remove, restart, generation,
+  and cleanup evidence;
+- distinct Runtime Unit identities and typed endpoints for every replica;
+- a black-box `server/discover` reachability probe whose protocol assertions
+  remain in the consumer harness; and
+- a pinned cross-repository compatibility and cleanup bundle.
+
+Exit gate: Runtime closes Cloud sub-gate `MCP0.2` without changing the generic
+Runtime wire schema or claiming ownership of MCP request semantics.
+
 ## Immediate execution order
 
 1. Preserve the existing optional ephemeral-storage and `unknown` recovery
@@ -158,11 +196,14 @@ reviewable, exact-SHA evidence.
    durable-state slice.
 5. Enable and expand real Docker conformance before starting the A3S Box
    adapter, so the shared provider oracles are proven by one real driver first.
+6. Start `R23` and `R24` as contract work, but do not claim the MCP substrate
+   until the required Box profiles and `R25`-`R28` exact-revision evidence pass.
 
 ## Completion rule
 
-The project is complete only when `R22` can map every explicit invariant,
-profile, performance gate, soak gate, production-safety condition, and cleanup
-requirement to authoritative evidence. An unexecuted environment-gated test,
-mock-only result, intended provider feature, or passing narrow smoke test is not
-completion evidence.
+The general Runtime release is complete only when `R22` can map every explicit
+invariant, profile, performance gate, soak gate, production-safety condition,
+and cleanup requirement to authoritative evidence. A release that claims an
+MCP-ready Service substrate must additionally pass `R28`. An unexecuted
+environment-gated test, mock-only result, intended provider feature, or passing
+narrow smoke test is not completion evidence.

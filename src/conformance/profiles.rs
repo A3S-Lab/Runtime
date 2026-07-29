@@ -389,10 +389,14 @@ fn extend_capability_case_ids(
                     }
                     NetworkMode::Service => {
                         case_ids.insert("NETWORK-MODE-SERVICE".into());
-                        case_ids.insert("NETWORK-PROTOCOL-TCP".into());
-                        case_ids.insert("NETWORK-PROTOCOL-UDP".into());
                         case_ids.insert("NETWORK-LOOPBACK-PUBLICATION".into());
                         case_ids.insert("NETWORK-PORT-COLLISION".into());
+                        if capabilities.supports_feature(RuntimeFeature::ServiceTcp) {
+                            case_ids.insert("NETWORK-PROTOCOL-TCP".into());
+                        }
+                        if capabilities.supports_feature(RuntimeFeature::ServiceUdp) {
+                            case_ids.insert("NETWORK-PROTOCOL-UDP".into());
+                        }
                     }
                 }
             }

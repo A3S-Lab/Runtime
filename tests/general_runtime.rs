@@ -1,11 +1,11 @@
 use a3s_runtime::contract::{
     ArtifactRef, HealthCheckKind, HealthProbe, IsolationLevel, MountKind, NetworkMode,
     ResourceControl, ResourceLimits, RestartPolicy, RuntimeActionRequest, RuntimeApplyRequest,
-    RuntimeCapabilities, RuntimeExecRequest, RuntimeExecResult, RuntimeFeature, RuntimeHealthCheck,
-    RuntimeHealthObservation, RuntimeHealthState, RuntimeInspection, RuntimeLogChunk,
-    RuntimeLogQuery, RuntimeLogStream, RuntimeNetworkSpec, RuntimeObservation,
+    RuntimeCapabilities, RuntimeEvidence, RuntimeExecRequest, RuntimeExecResult, RuntimeFeature,
+    RuntimeHealthCheck, RuntimeHealthObservation, RuntimeHealthState, RuntimeInspection,
+    RuntimeLogChunk, RuntimeLogQuery, RuntimeLogStream, RuntimeNetworkSpec, RuntimeObservation,
     RuntimeOutputArtifact, RuntimeOutputSpec, RuntimePort, RuntimeProcessSpec, RuntimeRemoval,
-    RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState, TransportProtocol,
+    RuntimeServiceEndpoint, RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState, TransportProtocol,
 };
 use a3s_runtime::{
     verify_runtime_provider, FileRuntimeStateStore, ManagedRuntimeClient, ProviderId,
@@ -204,6 +204,7 @@ impl RuntimeDriver for GenerationDriver {
             checked_at_ms: observation.observed_at_ms,
             message: None,
         });
+        publish_test_endpoints(spec, &mut observation, "generation-driver/1")?;
         observation
             .validate_against(spec)
             .map_err(RuntimeError::Protocol)?;
@@ -384,6 +385,7 @@ impl RuntimeDriver for TestDriver {
             checked_at_ms: NOW + 1,
             message: None,
         });
+        publish_test_endpoints(spec, &mut observation, "test-driver/1")?;
         observation.outputs = if observation.state == RuntimeUnitState::Succeeded {
             spec.outputs
                 .iter()
@@ -440,6 +442,7 @@ impl RuntimeDriver for TestDriver {
             .then_some(observation.observed_at_ms);
         if observation.state.is_terminal() {
             observation.health = None;
+            observation.clear_service_endpoints();
         }
         observation.outputs.clear();
         Ok(observation)
@@ -511,6 +514,9 @@ impl RuntimeDriver for TestDriver {
         let mut observation = unit.observation.clone();
         if self.substitute_exec_spec.load(Ordering::SeqCst) {
             observation.spec_digest = digest('f');
+            if let Some(evidence) = &mut observation.evidence {
+                evidence.spec_digest = observation.spec_digest.clone();
+            }
         }
         let stdout_bytes = self.exec_stdout_bytes.load(Ordering::SeqCst);
         let result = RuntimeExecResult {
@@ -672,11 +678,51 @@ fn capabilities(provider_id: ProviderId) -> RuntimeCapabilities {
             RuntimeFeature::DurableIdentity,
             RuntimeFeature::Stop,
             RuntimeFeature::Remove,
+            RuntimeFeature::ServiceTcp,
+            RuntimeFeature::ServiceUdp,
             RuntimeFeature::Logs,
             RuntimeFeature::Exec,
             RuntimeFeature::OutputArtifacts,
         ],
     }
+}
+
+fn publish_test_endpoints(
+    spec: &RuntimeUnitSpec,
+    observation: &mut RuntimeObservation,
+    provider_build: &str,
+) -> RuntimeResult<()> {
+    observation.clear_service_endpoints();
+    if observation.state != RuntimeUnitState::Running
+        || spec.class != RuntimeUnitClass::Service
+        || spec.network.mode != NetworkMode::Service
+    {
+        return Ok(());
+    }
+
+    let evidence = observation.evidence.get_or_insert_with(|| RuntimeEvidence {
+        provider_build: provider_build.into(),
+        spec_digest: spec.digest().expect("valid test specification"),
+        semantics_profile_digest: spec.semantics_profile_digest.clone(),
+        claims: BTreeMap::new(),
+    });
+    for (index, port) in spec.network.ports.iter().enumerate() {
+        let host_port =
+            49_152_u16
+                .checked_add(u16::try_from(index).map_err(|_| {
+                    RuntimeError::Protocol("test endpoint index exceeds u16".into())
+                })?)
+                .ok_or_else(|| RuntimeError::Protocol("test endpoint port overflow".into()))?;
+        RuntimeServiceEndpoint::new(
+            &port.name,
+            port.protocol,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            host_port,
+        )
+        .and_then(|endpoint| endpoint.insert_claim(&mut evidence.claims))
+        .map_err(RuntimeError::Protocol)?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -1761,7 +1807,7 @@ async fn deadlines_bound_capability_queries_and_provider_dispatch() {
         .store(true, Ordering::SeqCst);
     let (client, store) = capability_driver.client();
     let mut request = apply("capability-timeout", service("capability-timeout", 1));
-    request.deadline_at_ms = Some(NOW + 10);
+    request.deadline_at_ms = Some(NOW + 100);
     assert!(matches!(
         client.apply(&request).await,
         Err(RuntimeError::DeadlineExceeded(message))
@@ -1777,7 +1823,7 @@ async fn deadlines_bound_capability_queries_and_provider_dispatch() {
     provider_driver.hang_apply.store(true, Ordering::SeqCst);
     let (client, store) = provider_driver.client();
     let mut request = apply("provider-timeout", service("provider-timeout", 1));
-    request.deadline_at_ms = Some(NOW + 10);
+    request.deadline_at_ms = Some(NOW + 100);
     assert!(matches!(
         client.apply(&request).await,
         Err(RuntimeError::DeadlineExceeded(message)) if message.contains("provider apply")

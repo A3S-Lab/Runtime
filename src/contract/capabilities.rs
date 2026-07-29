@@ -21,6 +21,8 @@ pub enum RuntimeFeature {
     DurableIdentity,
     Stop,
     Remove,
+    ServiceTcp,
+    ServiceUdp,
     Logs,
     Exec,
     Usage,
@@ -48,7 +50,7 @@ pub struct RuntimeCapabilities {
 }
 
 impl RuntimeCapabilities {
-    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v3";
+    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v4";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -73,6 +75,15 @@ impl RuntimeCapabilities {
         ensure_unique("health check kind", &self.health_check_kinds)?;
         ensure_unique("resource control", &self.resource_controls)?;
         ensure_unique("feature", &self.features)?;
+        let service_mode = self.network_modes.contains(&NetworkMode::Service);
+        let service_protocol = self.supports_feature(RuntimeFeature::ServiceTcp)
+            || self.supports_feature(RuntimeFeature::ServiceUdp);
+        if service_mode != service_protocol {
+            return Err(
+                "Runtime Service networking and service protocol capabilities must be advertised together"
+                    .into(),
+            );
+        }
         for media_type in &self.artifact_media_types {
             super::validate_nonempty("artifact media type", media_type, 255)?;
         }
@@ -101,6 +112,15 @@ impl RuntimeCapabilities {
         }
         if !self.network_modes.contains(&spec.network.mode) {
             missing.push(format!("network_mode:{:?}", spec.network.mode));
+        }
+        for protocol in spec.network.ports.iter().map(|port| port.protocol) {
+            let feature = match protocol {
+                super::TransportProtocol::Tcp => RuntimeFeature::ServiceTcp,
+                super::TransportProtocol::Udp => RuntimeFeature::ServiceUdp,
+            };
+            if !self.supports_feature(feature) {
+                missing.push(format!("feature:{feature:?}"));
+            }
         }
         for kind in spec.mounts.iter().map(|mount| mount.source.kind()) {
             if !self.mount_kinds.contains(&kind) {

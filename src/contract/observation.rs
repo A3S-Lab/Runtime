@@ -1,5 +1,6 @@
 use super::{
-    ArtifactRef, IsolationLevel, RuntimeOutputArtifact, RuntimeUnitClass, RuntimeUnitSpec,
+    ArtifactRef, IsolationLevel, NetworkMode, RuntimeOutputArtifact, RuntimeServiceEndpoint,
+    RuntimeUnitClass, RuntimeUnitSpec,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -213,6 +214,19 @@ impl RuntimeObservation {
                 return Err("Runtime evidence does not bind the observation spec".into());
             }
         }
+        let endpoints = self.service_endpoints()?;
+        if !endpoints.is_empty()
+            && (self.class != RuntimeUnitClass::Service || self.state != RuntimeUnitState::Running)
+        {
+            return Err("Runtime service endpoints require a running Service observation".into());
+        }
+        let mut endpoint_sockets = BTreeSet::new();
+        if endpoints
+            .iter()
+            .any(|endpoint| !endpoint_sockets.insert((endpoint.protocol, endpoint.socket_addr())))
+        {
+            return Err("Runtime observation contains duplicate service endpoint sockets".into());
+        }
         if let Some(attestation) = &self.provider_attestation {
             attestation.validate()?;
         }
@@ -255,6 +269,33 @@ impl RuntimeObservation {
         } else if !self.outputs.is_empty() {
             return Err("only a succeeded Task may report outputs".into());
         }
+        let endpoints = self.service_endpoints()?;
+        if self.class == RuntimeUnitClass::Service
+            && self.state == RuntimeUnitState::Running
+            && spec.network.mode == NetworkMode::Service
+        {
+            if endpoints.len() != spec.network.ports.len() {
+                return Err(
+                    "running Runtime Service did not report the exact declared endpoints".into(),
+                );
+            }
+            for port in &spec.network.ports {
+                let endpoint = endpoints
+                    .iter()
+                    .find(|endpoint| endpoint.port_name == port.name)
+                    .ok_or_else(|| {
+                        format!("running Runtime Service omitted endpoint {:?}", port.name)
+                    })?;
+                if endpoint.protocol != port.protocol {
+                    return Err(format!(
+                        "Runtime service endpoint {:?} protocol does not match its declaration",
+                        port.name
+                    ));
+                }
+            }
+        } else if !endpoints.is_empty() {
+            return Err("Runtime service endpoints do not match the unit lifecycle".into());
+        }
         if spec.isolation == IsolationLevel::Confidential
             && self.provider_resource_id.is_some()
             && self.provider_attestation.is_none()
@@ -264,6 +305,19 @@ impl RuntimeObservation {
             );
         }
         Ok(())
+    }
+
+    pub fn service_endpoints(&self) -> Result<Vec<RuntimeServiceEndpoint>, String> {
+        self.evidence
+            .as_ref()
+            .map(|evidence| RuntimeServiceEndpoint::from_claims(&evidence.claims))
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
+    pub fn clear_service_endpoints(&mut self) {
+        if let Some(evidence) = &mut self.evidence {
+            RuntimeServiceEndpoint::remove_claims(&mut evidence.claims);
+        }
     }
 
     pub fn converges(&self, spec: &RuntimeUnitSpec) -> bool {

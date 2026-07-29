@@ -42,7 +42,8 @@ their owning applications.
 - **Idempotent Lifecycle**: Apply, inspect, stop, and remove units with durable
   request receipts and deterministic conflict detection
 - **Structured Capabilities**: Match artifact, isolation, network, mount,
-  health, resource, and optional feature requirements before provider dispatch
+  service-transport, health, resource, and optional feature requirements before
+  provider dispatch
 - **Provider-Neutral Inputs**: Describe processes, artifacts, mounts, secret
   references, resources, networking, health checks, restart policy, and outputs
 - **Observed Convergence**: Keep desired specifications separate from provider
@@ -92,7 +93,11 @@ Protocol validation occurs before state reservation or provider work.
 
 `RuntimeObservation` binds provider state to the exact unit ID, generation,
 class, and specification digest. It can carry stable provider identity, health,
-resource usage, output artifacts, evidence, attestation, and structured failure.
+resource usage, output artifacts, typed node-local Service endpoints, evidence,
+attestation, and structured failure. A running Service reports exactly one
+canonical loopback endpoint for every declared port. Endpoints are absent from
+all other lifecycle states and remain bound to the evidence provider build and
+specification digest.
 
 Terminal observations are immutable. If a previously observed provider resource
 cannot be found, inspection records `unknown`; it does not silently report
@@ -141,10 +146,12 @@ text.
 ## Capabilities
 
 Providers report supported unit classes, artifact media types, isolation
-levels, network modes, mount kinds, health probes, resource controls, and
-optional features. `ManagedRuntimeClient` validates the complete specification
-against those capabilities before reserving state, so unsupported work cannot
-leave a pending record or partially created provider resource.
+levels, network modes, Service transport protocols, mount kinds, health probes,
+resource controls, and optional features. Capabilities v4 represents TCP and
+UDP Service publication independently through `ServiceTcp` and `ServiceUdp`.
+`ManagedRuntimeClient` validates the complete specification against those
+capabilities before reserving state, so unsupported work cannot leave a pending
+record or partially created provider resource.
 
 The registry maps explicit `ProviderId` values to typed factories. It does not
 choose a provider, infer login state, or fall back to a default. Callers own that
@@ -226,11 +233,11 @@ inventory returned to the pre-run baseline.
 Profile requirements expand to one case ID per advertised behavior rather than
 accepting a generic family-level claim. For example, every reported network
 mode, mount kind, health probe, and resource control activates its own
-configuration and behavioral cases. `NetworkMode::Service` activates both TCP
-and UDP because the current protocol has no narrower transport-protocol
-capability. Logs separately require filtering, total order, cursor resume,
-same-timestamp handling, limits, explicit rotation gaps, terminal retention,
-and bounded large records.
+configuration and behavioral cases. `NetworkMode::Service` activates only the
+TCP and/or UDP cases named by the provider's exact Service protocol features;
+it never implies support for an unadvertised transport. Logs separately require
+filtering, total order, cursor resume, same-timestamp handling, limits, explicit
+rotation gaps, terminal retention, and bounded large records.
 
 `verify_runtime_provider` remains available as the lower-level successful Task
 and Service lifecycle check. It is not, by itself, production certification.

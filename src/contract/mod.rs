@@ -9,7 +9,9 @@ mod unit;
 
 pub use artifact::{ArtifactRef, RuntimeOutputArtifact};
 pub use capabilities::{ResourceControl, RuntimeCapabilities, RuntimeFeature};
-pub use network::{NetworkMode, RuntimeNetworkSpec, RuntimePort, TransportProtocol};
+pub use network::{
+    NetworkMode, RuntimeNetworkSpec, RuntimePort, RuntimeServiceEndpoint, TransportProtocol,
+};
 pub use observation::{
     RuntimeEvidence, RuntimeFailure, RuntimeHealthObservation, RuntimeHealthState,
     RuntimeInspection, RuntimeObservation, RuntimeUnitState, RuntimeUsage,

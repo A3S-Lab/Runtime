@@ -340,6 +340,8 @@ async fn conf_profile_005_requirements_expand_every_advertised_behavior() {
         ResourceControl::ExecutionTimeout,
     ];
     capabilities.features.extend([
+        RuntimeFeature::ServiceTcp,
+        RuntimeFeature::ServiceUdp,
         RuntimeFeature::Logs,
         RuntimeFeature::Usage,
         RuntimeFeature::Attestation,

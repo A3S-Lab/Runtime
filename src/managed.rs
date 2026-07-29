@@ -282,6 +282,7 @@ impl RuntimeClient for ManagedRuntimeClient {
                 unknown.finished_at_ms = None;
                 unknown.health = None;
                 unknown.outputs.clear();
+                unknown.clear_service_endpoints();
                 unknown.failure = None;
                 let record = self.state.update_observation(None, &unknown).await?;
                 Ok(RuntimeInspection::Found {

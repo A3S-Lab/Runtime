@@ -85,7 +85,7 @@ fn assert_top_level_fixture<T>(
 #[test]
 fn ct_schema_001_every_top_level_wire_record_has_a_versioned_golden_fixture() {
     assert_top_level_fixture::<RuntimeCapabilities>(
-        include_str!("golden/capabilities-v3.json"),
+        include_str!("golden/capabilities-v4.json"),
         RuntimeCapabilities::SCHEMA,
         RuntimeCapabilities::validate,
     );

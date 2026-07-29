@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="470" viewBox="0 0 1200 470"
+     role="img" aria-labelledby="title desc">
+  <title id="title">A3S Runtime architecture</title>
+  <desc id="desc">Caller policy enters the provider-neutral ManagedRuntimeClient, which persists state through RuntimeStateStore and dispatches provider mechanics through RuntimeDriver to an external runtime.</desc>
+
+  <rect width="1200" height="470" rx="28" fill="#0b0d10"/>
+  <rect x="1" y="1" width="1198" height="468" rx="27" fill="none" stroke="#2c323a" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <circle cx="62" cy="54" r="6" fill="#f97316"/>
+    <text x="80" y="61" fill="#a9b1bb"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="650" letter-spacing="1.5">OWNERSHIP BOUNDARY</text>
+    <text x="60" y="108" fill="#f7f3ea" font-size="36" font-weight="720">
+      One contract. Three replaceable boundaries.
+    </text>
+
+    <g id="flow-arrows" fill="none" stroke="#59626d" stroke-width="3">
+      <path d="M270 222 H324"/>
+      <path d="M306 210 L324 222 L306 234"/>
+      <path d="M650 222 H704"/>
+      <path d="M686 210 L704 222 L686 234"/>
+      <path d="M904 222 H958"/>
+      <path d="M940 210 L958 222 L940 234"/>
+      <path d="M488 292 V337"/>
+      <path d="M476 319 L488 337 L500 319"/>
+    </g>
+
+    <g id="caller" transform="translate(60 156)">
+      <rect width="210" height="136" rx="16" fill="#15191f" stroke="#343b44" stroke-width="1.5"/>
+      <text x="20" y="34" fill="#a9b1bb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="650">CALLER POLICY</text>
+      <text x="20" y="73" fill="#f7f3ea" font-size="22" font-weight="650">Provider selection</text>
+      <text x="20" y="104" fill="#a9b1bb" font-size="19">Scheduling · routing</text>
+    </g>
+
+    <g id="managed-runtime" transform="translate(324 146)">
+      <rect width="326" height="146" rx="16" fill="#181512" stroke="#f97316" stroke-width="2"/>
+      <text x="22" y="38" fill="#f97316"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="750">MANAGED RUNTIME</text>
+      <text x="22" y="77" fill="#f7f3ea" font-size="24" font-weight="700">ManagedRuntimeClient</text>
+      <text x="22" y="112" fill="#d2cbc0" font-size="19">Validate · reserve · replay · commit</text>
+    </g>
+
+    <g id="driver" transform="translate(704 156)">
+      <rect width="200" height="136" rx="16" fill="#15191f" stroke="#343b44" stroke-width="1.5"/>
+      <text x="20" y="34" fill="#a9b1bb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="650">PROVIDER PORT</text>
+      <text x="20" y="73" fill="#f7f3ea" font-size="22" font-weight="650">RuntimeDriver</text>
+      <text x="20" y="104" fill="#a9b1bb" font-size="19">Idempotent mechanics</text>
+    </g>
+
+    <g id="external-runtime" transform="translate(958 156)">
+      <rect width="182" height="136" rx="16" fill="#15191f" stroke="#343b44" stroke-width="1.5"/>
+      <text x="20" y="34" fill="#a9b1bb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="650">EXTERNAL</text>
+      <text x="20" y="73" fill="#f7f3ea" font-size="21" font-weight="650">Container</text>
+      <text x="20" y="104" fill="#a9b1bb" font-size="18">Sandbox · remote</text>
+    </g>
+
+    <g id="state-store" transform="translate(324 337)">
+      <rect width="326" height="82" rx="14" fill="#12161b" stroke="#5eead4" stroke-width="1.5"/>
+      <text x="20" y="33" fill="#5eead4"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="750">RUNTIME STATE STORE</text>
+      <text x="20" y="62" fill="#f7f3ea" font-size="19">Unit record + request receipts</text>
+    </g>
+
+    <g id="clock" transform="translate(682 337)">
+      <rect width="218" height="82" rx="14" fill="#12161b" stroke="#343b44" stroke-width="1.5"/>
+      <text x="18" y="33" fill="#a9b1bb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="650">RUNTIME CLOCK</text>
+      <text x="18" y="62" fill="#f7f3ea" font-size="19">Deadlines + observation time</text>
+    </g>
+  </g>
+</svg>

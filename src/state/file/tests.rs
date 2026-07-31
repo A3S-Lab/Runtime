@@ -508,6 +508,7 @@ fn state_fs_002_corrupt_permission_and_non_regular_boundaries_fail_closed() {
     ));
 }
 
+#[cfg(unix)]
 fn spawn_atomic_crash_helper(root: &Path, ready: &Path, failpoint: &str) -> Child {
     Command::new(std::env::current_exe().expect("current test executable"))
         .arg("subprocess_atomic_write_helper")
@@ -520,6 +521,7 @@ fn spawn_atomic_crash_helper(root: &Path, ready: &Path, failpoint: &str) -> Chil
         .expect("spawn atomic-write helper")
 }
 
+#[cfg(unix)]
 fn spawn_io_fault_helper(root: &Path, result: &Path, request_id: &str, fault: &str) -> Child {
     Command::new(std::env::current_exe().expect("current test executable"))
         .arg("subprocess_atomic_io_fault_helper")
@@ -533,6 +535,7 @@ fn spawn_io_fault_helper(root: &Path, result: &Path, request_id: &str, fault: &s
         .expect("spawn atomic I/O-fault helper")
 }
 
+#[cfg(unix)]
 fn wait_for_success(child: &mut Child, case_id: &str) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -549,6 +552,7 @@ fn wait_for_success(child: &mut Child, case_id: &str) {
     }
 }
 
+#[cfg(unix)]
 fn staging_files(root: &Path) -> Vec<PathBuf> {
     let mut directories = vec![root.to_path_buf()];
     let mut staging = Vec::new();

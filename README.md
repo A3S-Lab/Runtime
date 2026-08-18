@@ -129,9 +129,8 @@ Choose the entry point that matches your role:
   equivalent fenced per-unit lease.
 
 > [!NOTE]
-> `a3s-runtime` 0.2.0 is the latest published crate. The `main` branch also
-> contains the newer capabilities v4 and typed Service endpoint contract; use a
-> matching source revision when integrating those unreleased APIs.
+> `a3s-runtime` 0.3.0 includes the capabilities v4 contract, typed Service
+> endpoint publication, and the frozen hosted MCP service consumer profile.
 
 ## Runtime specification
 

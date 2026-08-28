@@ -9,8 +9,11 @@ provider capabilities, and satisfy the release gates in the deep test plan. In
 parallel with that foundation, freeze the proposed ADR 0005 boundary; certify
 the modern MCP Service profile only after its required provider gates pass and
 without importing MCP protocol or product fields into Runtime core. Work is
-ordered by dependency; a later task cannot claim completion from mocks when
-its required real-provider evidence is absent.
+ordered by dependency. ADR 0006 additionally makes Runtime the single generic
+Task/Service substrate for A3S Cloud AaaS, WaaS executable nodes, FaaS, hosted
+MCP, and Durable Cell application Services, with A3S Box as the production
+provider. A later task cannot claim completion from mocks when its required
+real-provider evidence is absent.
 
 ## Working rules
 
@@ -43,7 +46,7 @@ its required real-provider evidence is absent.
 | R13 | Certify Docker identity, lifecycle, and generation handling | R09-R12 | Real Docker Base and Recovery profiles pass; zero duplicate/leaked containers |
 | R14 | Certify Docker network, mounts, health, resources, and logs | R11-R13 | Every advertised Docker capability has inspect plus behavioral evidence |
 | R15 | Complete A3S Cloud consumer recovery paths | R13-R14 | Projection, journal, restart, redelivery, reconciliation, logs, cancel, and cleanup E2E pass |
-| R16 | Implement A3S Box RuntimeDriver | R11 | Typed `sandbox` capability mapping with no provider-specific public fields |
+| R16 | Integrate and maintain A3S Box RuntimeDriver | R11 | Typed `sandbox` capability mapping with no provider-specific public fields |
 | R17 | Certify A3S Box profiles | R16 | Base/Recovery and every advertised Box profile pass on production-equivalent Linux |
 | R18 | Add fuzz, property, and security campaigns | R10-R17 | All declared targets run, regressions checked in, zero unresolved crash/hang/leak |
 | R19 | Add benchmarks and regression budgets | R10-R17 | Three clean same-runner baselines and enforced median/p95 budgets |
@@ -56,6 +59,12 @@ its required real-provider evidence is absent.
 | R26 | Certify MCP Service recovery and replica isolation | R25 | Generation replacement, process/host loss, external deletion, distinct replica IDs, endpoint cleanup, and zero leaks pass |
 | R27 | Run the Cloud and Gateway compatibility gate | R26 | Pinned Runtime/Box/Cloud/Gateway revisions consume only exact typed observations and one profile digest |
 | R28 | Audit the Runtime `MCP0.2` claim | R22-R27 | Every Runtime-owned `MCP0.2` criterion maps to reviewable exact-SHA evidence |
+| R29 | Freeze the unified Cloud consumer boundary | R11, ADR 0006 | Agent, Function, MCP, and Durable Cell fixtures use only Task/Service; Workflow remains orchestration-only |
+| R30 | Export one consumer admission/readiness abstraction | R29 | `RuntimeConsumerRequirements` composes class/features/profile/health/endpoints and fails closed in focused tests |
+| R31 | Migrate Cloud generic checks to the shared abstraction | R30 | Exact Runtime revision is pinned; duplicate class/capability/profile/readiness predicates are removed without moving product checks |
+| R32 | Certify AaaS, FaaS, and Durable Cell Box profiles | R17, R31 | Real Box lifecycle, recovery, endpoint, mount, Secret, output, cleanup, and profile evidence passes per declared profile |
+| R33 | Certify WaaS executable-node composition | R31-R32 | Flow replay chains/parallels Agent and Function children without a Workflow Runtime Unit or duplicate product intent |
+| R34 | Run the Gateway/Cloud/Runtime/Box service-platform gate | R22, R27, R32-R33 | Exact revisions prove public Gateway ingress, internal endpoint admission, recovery, tenant isolation, and zero residue |
 
 ## Work packages
 
@@ -184,6 +193,33 @@ Deliverables:
 Exit gate: Runtime closes Cloud sub-gate `MCP0.2` without changing the generic
 Runtime wire schema or claiming ownership of MCP request semantics.
 
+### Package H: Unified Cloud service consumers (`R29`-`R34`)
+
+Checkpoint (2026-08-28): `R29` and `R30` are component-complete. The generic
+consumer abstraction and Agent Service, Function Task/Service, stateless MCP
+Service, and Durable Cell Service fixtures pass focused tests. Cloud adoption,
+real Box evidence, Workflow composition, and the joint Gateway gate remain
+open.
+
+Deliverables:
+
+- one non-wire consumer requirements API over the existing capability, spec,
+  and observation contracts;
+- a source gate that prevents product terms from entering `src/contract`;
+- Cloud adoption through exact Git revision pinning;
+- no Workflow Runtime Unit: Flow coordinates only owner-created executable
+  children;
+- a required production A3S Box provider path with capability-triggered
+  conformance;
+- internal, generation-bound Service endpoints admitted by Cloud and published
+  only through A3S Gateway; and
+- per-profile recovery, cleanup, tenant isolation, and exact-revision evidence.
+
+Exit gate: AaaS, WaaS executable nodes, FaaS, MCP, and Durable Cell deployments
+share the same Runtime/Box lifecycle mechanics without sharing product state or
+creating a second scheduler, endpoint registry, provider control path, or
+public ingress.
+
 ## Immediate execution order
 
 1. Preserve the existing optional ephemeral-storage and `unknown` recovery
@@ -196,14 +232,21 @@ Runtime wire schema or claiming ownership of MCP request semantics.
    durable-state slice.
 5. Enable and expand real Docker conformance before starting the A3S Box
    adapter, so the shared provider oracles are proven by one real driver first.
-6. Start `R23` and `R24` as contract work, but do not claim the MCP substrate
-   until the required Box profiles and `R25`-`R28` exact-revision evidence pass.
+6. Review and land component-complete `R29`/`R30`, then pin Cloud to that exact
+   Runtime commit and complete `R31`.
+7. Treat A3S Box as the production provider: close `R32` before any Cloud AI
+   service availability claim.
+8. Prove Workflow Agent/Function child composition in `R33`, then run the joint
+   Gateway/Cloud/Runtime/Box gate in `R34`.
+9. Keep `R23`/`R24` as the MCP specialization, but do not claim the MCP
+   substrate until the required Box profiles and `R25`-`R28` evidence pass.
 
 ## Completion rule
 
 The general Runtime release is complete only when `R22` can map every explicit
 invariant, profile, performance gate, soak gate, production-safety condition,
 and cleanup requirement to authoritative evidence. A release that claims an
-MCP-ready Service substrate must additionally pass `R28`. An unexecuted
+MCP-ready Service substrate must additionally pass `R28`. A unified Cloud AI
+service substrate must additionally pass `R34`. An unexecuted
 environment-gated test, mock-only result, intended provider feature, or passing
 narrow smoke test is not completion evidence.

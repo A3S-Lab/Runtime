@@ -51,9 +51,11 @@ fn running_observation(spec: &RuntimeUnitSpec) -> RuntimeObservation {
 
 #[test]
 fn rmcp_fix_001_uses_only_the_generic_runtime_service_contract() {
-    let fixture = include_bytes!("fixtures/mcp0.1-runtime-unit-spec.json");
+    // Git may materialize the fixture with CRLF on Windows. The locked
+    // cross-repository identity is the repository's LF byte form.
+    let fixture = include_str!("fixtures/mcp0.1-runtime-unit-spec.json").replace("\r\n", "\n");
     assert_eq!(
-        format!("{:x}", Sha256::digest(fixture)),
+        format!("{:x}", Sha256::digest(fixture.as_bytes())),
         "5915c0ccac040fc4270ee5095de58b9115caee6e240464863cd6c3c1dcd59d23"
     );
     let spec = fixture_spec();

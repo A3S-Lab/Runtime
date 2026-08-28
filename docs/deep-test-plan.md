@@ -32,18 +32,18 @@ the Rust `a3s-runtime` protocol.
 
 ## 3. Evidence-Based Baseline
 
-Source inspection on 2026-07-17 established this baseline. It must be refreshed
+Source inspection on 2026-08-28 established this baseline. It must be refreshed
 at the start of an implementation or release campaign.
 
 | Area | Current evidence | Gap |
 | --- | --- | --- |
-| Runtime repository CI | No repository workflow is present | A green commit has no independent build or test evidence |
-| Core integration tests | `tests/general_runtime.rs` contains 16 lifecycle, conflict, recovery, state, registry, and conformance scenarios | Most boundary combinations, crash points, cross-process races, and capacity limits are untested |
-| Shared conformance | One happy-path Task and Service flow with replay checks | Optional features and negative/fault profiles are not covered |
-| Real provider | A3S Cloud contains `DockerRuntimeDriver` | No other concrete Runtime driver is implemented |
+| Runtime repository CI | Linux CI, publish workflow, MSRV/stable checks, and repository test suites are present | A release still needs retained exact-commit evidence |
+| Core integration tests | General lifecycle, deterministic fault, cross-process race, protocol golden, endpoint, registry, consumer, and conformance suites are present | Performance, soak, and every real-provider combination remain release gates |
+| Shared conformance | Base, Recovery, Networking, Mounts, Health, Resources, Logs, Exec, Security, Outputs, and Evidence profiles are implemented | Each provider must execute every capability-triggered profile without a skip |
+| Real provider | A3S Cloud retains Docker integration and A3S Box implements `BoxRuntimeDriver` | Exact-revision consumer compatibility and all production-required capability profiles remain gate-driven |
 | Real Docker tests | Three tests cover common conformance, create-before-state-update recovery, and external provider loss | They return success without running unless `A3S_CLOUD_TEST_DOCKER=1` |
-| A3S Box | Documented as a future provider | No `RuntimeDriver` exists, so Box conformance cannot currently be claimed |
-| Non-functional testing | No benchmark, fuzz, mutation, multi-process crash, or soak harness is present | No regression or durability evidence exists |
+| A3S Box | Driver plus Base/Recovery and capability-triggered conformance fixtures exist in the Box repository | Re-certify against this Runtime revision; `Outbound` is not currently advertised and cannot be inferred |
+| Non-functional testing | Deterministic fault and multi-process race harnesses exist | Benchmark, fuzz, mutation, long soak, and complete production evidence remain open |
 
 Existing tests are useful regression assets, but their presence is not proof
 that they passed for a given commit. Every report must bind results to an exact
@@ -344,19 +344,20 @@ This table describes source claims, not release certification.
 
 | Capability | Docker driver in A3S Cloud | A3S Box driver |
 | --- | --- | --- |
-| Task and Service | Advertised | Not implemented |
-| OCI/Docker manifest | Advertised with digest-pinned URI | Not implemented at this boundary |
-| Isolation | `container` | Intended `sandbox`; no adapter evidence |
-| Network | none, outbound, service | Not implemented at this boundary |
-| Mounts | named volume, tmpfs | Not implemented at this boundary |
-| Health | HTTP, TCP, command | Not implemented at this boundary |
-| Resources | CPU, memory, PIDs, Task timeout | Not implemented at this boundary |
-| Features | durable identity, stop, remove, logs | Not implemented at this boundary |
-| Not advertised | exec, usage, attestation, secrets, artifact mounts, ephemeral quota | No claims are testable yet |
+| Task and Service | Advertised | Advertised |
+| OCI/Docker manifest | Advertised with digest-pinned URI | OCI image manifest and index advertised |
+| Isolation | `container` | `sandbox`; optional `confidential` when SEV-SNP is configured |
+| Network | none, outbound, service | none and service; outbound is not advertised |
+| Mounts | named volume, tmpfs | volume and tmpfs; artifact when configured |
+| Health | HTTP, TCP, command | HTTP, TCP, command |
+| Resources | CPU, memory, PIDs, Task timeout | CPU, memory, PIDs, Task timeout |
+| Features | durable identity, stop, remove, logs | durable identity, stop, remove, TCP Service, logs, exec; Secrets, outputs, and attestation when configured |
+| Not advertised | exec, usage, attestation, secrets, artifact mounts, ephemeral quota | usage, UDP Service, outbound, and ephemeral quota; optional capabilities must never be inferred |
 
-An A3S Box row may become a release gate only after a real `RuntimeDriver`
-exists and maps `IsolationLevel::Sandbox` without provider-specific fields in
-the public contract.
+The A3S Box row becomes release evidence only when the exact Box and Runtime
+revisions execute every profile activated by source-reported capabilities and
+restore the provider inventory. The presence of its driver or fixture is not a
+passing result.
 
 ### 10.1 Docker-specific mandatory cases
 
@@ -398,7 +399,30 @@ can claim Runtime compatibility. Product-specific scoring, privacy, and
 scheduling remain outside the Runtime crate, but their projection digest and
 generic resource/isolation requirements are in scope.
 
-### 11.1 Modern MCP Service consumer profile
+### 11.1 Unified Cloud service consumer profiles
+
+The component suite first proves that all consumers compose one generic
+admission/readiness abstraction:
+
+| Consumer profile | Required projection | Component oracle | Real-provider oracle |
+| --- | --- | --- | --- |
+| Stateful Agent | `Service` with exact semantics, health, TCP endpoint, Secrets, logs, exec, and a persistent mount when required | No Agent class or wire field; missing profile/capability/evidence fails closed | Box process/node loss preserves one fenced binding and no stale workspace writer |
+| Finite Function | `Task` with exact semantics, timeout, isolation, output and network policy | No Function class; terminal outputs remain exact and bounded | Box timeout/cancel/recovery/cleanup plus egress behavior for every advertised mode |
+| Stateless Function | `Service` with exact semantics, health, and TCP endpoint | Same requirements shape as sessionless MCP | Gateway route, scale policy, replacement, load, and cleanup pass at exact revisions |
+| Workflow | No Unit for orchestration; owner-created child profiles only | Flow replay cannot create a second child intent | Chained/parallel Agent and Function nodes recover without duplicate Units or outcomes |
+| Durable Cell application | `Service` with exact semantics, health, endpoint, Secret and persistent storage requirements | No Cell class; an individual named Cell is never a Unit | Runtime recovery plus provider state lineage and exclusive-writer fencing pass |
+
+The release matrix must also prove the sole production and traffic paths:
+
+```text
+public request -> A3S Gateway -> Cloud-admitted target
+hosted execution -> A3S Cloud -> A3S Runtime -> A3S Box
+```
+
+Direct public Runtime/Box endpoints, direct Cloud-to-Box lifecycle calls, and a
+Gateway-created Runtime Unit fail the architecture gate.
+
+### 11.2 Modern MCP Service consumer profile
 
 The Runtime `MCP0.2` claim is an optional consumer profile, not a new provider
 capability or Runtime protocol. Its pinned real-service fixture must prove:
@@ -645,6 +669,23 @@ production canary bundle proves zero leaked resources and no safety stop.
 Exit: Runtime can truthfully claim an MCP-ready Service substrate while MCP
 protocol handling and product desired state remain outside Runtime core.
 
+### P6: Unified Cloud AI service certification
+
+- Pin exact Gateway, Cloud, Runtime, Box, Flow, and black-box fixture revisions.
+- Run the Section 11.1 AaaS, WaaS executable-node, FaaS, and Durable Cell
+  matrices through `RuntimeConsumerRequirements`.
+- Prove Gateway is the only public ingress and consumes only exact Cloud
+  snapshots; Runtime endpoints remain internal.
+- Exercise process, provider, node, and host loss plus generation replacement,
+  route drain, cancellation, object/volume cleanup, and tenant isolation.
+- Run every A3S Box capability profile required by the selected consumers;
+  fail before dispatch when a required capability such as `Outbound` is not
+  advertised.
+
+Exit: the product profiles share one Task/Service and Box substrate without a
+product Runtime class, duplicate scheduler, duplicate endpoint registry,
+direct provider path, stale public target, or leaked resource.
+
 ## 18. Release Gates
 
 A Runtime release is blocked unless:
@@ -662,6 +703,8 @@ A Runtime release is blocked unless:
 9. The evidence bundle is complete, redacted, checksummed, and reviewable.
 10. A release claiming the MCP-ready Service profile passes P5 at pinned
     Runtime, Box, Cloud, Gateway, and fixture revisions.
+11. A release claiming the unified Cloud AI service substrate passes P6 at
+    pinned Gateway, Cloud, Runtime, Box, Flow, and fixture revisions.
 
 Passing a mock-only suite, an environment-gated test that did not execute, or a
 narrow provider smoke test is not sufficient evidence for a release claim.

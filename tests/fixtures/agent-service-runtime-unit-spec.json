@@ -1,0 +1,77 @@
+{
+  "schema": "a3s.runtime.unit-spec.v2",
+  "unit_id": "workload:agent-harness:replica:1",
+  "generation": 7,
+  "class": "service",
+  "artifact": {
+    "uri": "oci://registry.example/a3s/agent-harness@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "media_type": "application/vnd.oci.image.manifest.v1+json"
+  },
+  "process": {
+    "command": ["/app/harness"],
+    "args": ["serve", "--address=0.0.0.0:8080"],
+    "working_directory": "/workspace",
+    "environment": {
+      "RUST_LOG": "info"
+    }
+  },
+  "mounts": [
+    {
+      "name": "workspace",
+      "source": {
+        "kind": "volume",
+        "volume_id": "agent-workspace-lease-1"
+      },
+      "target": "/workspace",
+      "read_only": false
+    }
+  ],
+  "secrets": [
+    {
+      "name": "broker socket",
+      "reference": "secret://broker/grant-1",
+      "target": {
+        "kind": "file",
+        "path": "/run/secrets/broker",
+        "mode": 384
+      }
+    }
+  ],
+  "network": {
+    "mode": "service",
+    "ports": [
+      {
+        "name": "harness",
+        "container_port": 8080,
+        "protocol": "tcp"
+      }
+    ]
+  },
+  "resources": {
+    "cpu_millis": 2000,
+    "memory_bytes": 2147483648,
+    "pids": 512,
+    "ephemeral_storage_bytes": 8589934592,
+    "execution_timeout_ms": null
+  },
+  "isolation": "sandbox",
+  "health": {
+    "probe": {
+      "kind": "http",
+      "port": "harness",
+      "path": "/health",
+      "expected_statuses": [200]
+    },
+    "interval_ms": 10000,
+    "timeout_ms": 2000,
+    "start_period_ms": 30000,
+    "success_threshold": 1,
+    "failure_threshold": 3
+  },
+  "restart": {
+    "kind": "always"
+  },
+  "outputs": [],
+  "semantics_profile_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

@@ -24,6 +24,11 @@ long-running Services. It gives callers one lifecycle API across local,
 container, sandbox, and remote providers while keeping provider mechanics
 behind a typed driver boundary.
 
+It is the single execution substrate beneath A3S Cloud AaaS, executable WaaS
+nodes, FaaS, hosted MCP, and Durable Cell application Services. The supported
+production chain uses A3S Box as the process/sandbox provider; public traffic
+enters through A3S Gateway and never through a Runtime endpoint directly.
+
 Runtime owns validation, immutable generations, capability admission, durable
 request identity, and observed convergence. Scheduling, routing, deployment
 workflow, product policy, and provider selection stay with the caller.
@@ -51,8 +56,12 @@ Every unit generation is bound to one immutable identity:
 
 | Unit class | Converges when | Typical work |
 | --- | --- | --- |
-| `Task` | `succeeded` | Builds, migrations, evaluations, backups |
-| `Service` | `running`, and healthy when configured | Applications, Agents, MCP servers |
+| `Task` | `succeeded` | Builds, finite Functions, migrations, evaluations, backups |
+| `Service` | `running`, and healthy when configured | Stateful Agents, stateless Functions/MCP, Durable Cell applications |
+
+Workflow orchestration is not a third unit class. A3S Flow owns the durable
+Workflow state machine; only its executable Agent or Function children project
+to a Runtime Task or Service.
 
 ## Architecture
 
@@ -73,6 +82,35 @@ replaceable ports:
 The driver never decides generation or request-conflict policy. The registry
 never selects a default provider or silently falls back: callers choose an
 explicit `ProviderId` and connect through `RuntimeClientRegistry`.
+
+### Cloud, Runtime, Box, and Gateway
+
+```text
+Client -> A3S Gateway -> A3S Cloud -> A3S Runtime -> A3S Box
+          public path    semantics    lifecycle     execution
+```
+
+`RuntimeConsumerRequirements` is the one non-wire admission/readiness
+abstraction for consumer profiles. It composes a generic unit class, required
+features, opaque semantics evidence, Service health, and exact endpoints while
+leaving all product fields in the caller:
+
+```rust,ignore
+use a3s_runtime::contract::{RuntimeFeature, RuntimeUnitClass};
+use a3s_runtime::RuntimeConsumerRequirements;
+
+let requirements = RuntimeConsumerRequirements::new(RuntimeUnitClass::Service)
+    .require_semantics_profile()
+    .require_health()
+    .require_service_endpoints()
+    .require_feature(RuntimeFeature::ServiceTcp);
+
+requirements.admit_spec(&spec, &capabilities)?;
+requirements.accept_observation(&spec, &observation)?;
+```
+
+See [Unified AI Service Runtime](docs/unified-ai-service-runtime.md) for the
+Agent, Workflow, Function, MCP, and Durable Cell projection matrix.
 
 ### One apply, end to end
 
@@ -131,6 +169,9 @@ Choose the entry point that matches your role:
 > [!NOTE]
 > `a3s-runtime` 0.3.0 includes the capabilities v4 contract, typed Service
 > endpoint publication, and the frozen hosted MCP service consumer profile.
+> The unified consumer requirements API is implemented on the current branch
+> and remains subject to the repository's release and exact Box certification
+> gates.
 
 ## Runtime specification
 
@@ -252,6 +293,11 @@ even after failure, and rejects any provider inventory delta.
 The lower-level `verify_runtime_provider` helper covers the successful Task and
 Service lifecycle, but it is not production certification by itself.
 
+A3S Box contains the production `RuntimeDriver` and capability-triggered
+fixtures. A Cloud product may claim support only after the exact Runtime and Box
+revisions pass every advertised profile and restore the pre-test inventory;
+unadvertised capabilities such as outbound networking cannot be inferred.
+
 ## Deliberate boundaries
 
 A3S Runtime intentionally does not own:
@@ -270,7 +316,9 @@ reasoning:
 - [ADR 0002 — Protocol and operation semantics](docs/adr/0002-complete-protocol-and-operation-semantics.md)
 - [ADR 0003 — Interactive streaming exec stays outside v0.2](docs/adr/0003-keep-interactive-streaming-exec-outside-v0.2-core.md)
 - [ADR 0004 — Typed Service endpoints and protocol capabilities](docs/adr/0004-type-service-endpoints-and-protocol-capabilities.md)
-- [ADR 0005 — Host modern stateless MCP as a Service profile (proposed)](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
+- [ADR 0005 — Host modern stateless MCP as a Service profile](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
+- [ADR 0006 — Unify AI service consumers on Task, Service, and A3S Box](docs/adr/0006-unify-ai-service-consumers-on-task-service-and-box.md)
+- [Unified AI Service Runtime](docs/unified-ai-service-runtime.md)
 - [Roadmap](ROADMAP.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Deep test plan](docs/deep-test-plan.md)

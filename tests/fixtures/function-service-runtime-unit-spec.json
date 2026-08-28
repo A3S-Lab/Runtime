@@ -1,0 +1,55 @@
+{
+  "schema": "a3s.runtime.unit-spec.v2",
+  "unit_id": "workload:function-http:replica:1",
+  "generation": 2,
+  "class": "service",
+  "artifact": {
+    "uri": "oci://registry.example/a3s/function-http@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "media_type": "application/vnd.oci.image.manifest.v1+json"
+  },
+  "process": {
+    "command": ["/app/function"],
+    "args": ["serve", "--address=0.0.0.0:8080"],
+    "working_directory": "/app",
+    "environment": {}
+  },
+  "mounts": [],
+  "secrets": [],
+  "network": {
+    "mode": "service",
+    "ports": [
+      {
+        "name": "http",
+        "container_port": 8080,
+        "protocol": "tcp"
+      }
+    ]
+  },
+  "resources": {
+    "cpu_millis": 500,
+    "memory_bytes": 268435456,
+    "pids": 128,
+    "ephemeral_storage_bytes": 1073741824,
+    "execution_timeout_ms": null
+  },
+  "isolation": "sandbox",
+  "health": {
+    "probe": {
+      "kind": "http",
+      "port": "http",
+      "path": "/health",
+      "expected_statuses": [200]
+    },
+    "interval_ms": 10000,
+    "timeout_ms": 2000,
+    "start_period_ms": 30000,
+    "success_threshold": 1,
+    "failure_threshold": 3
+  },
+  "restart": {
+    "kind": "always"
+  },
+  "outputs": [],
+  "semantics_profile_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}

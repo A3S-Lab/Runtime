@@ -1,0 +1,75 @@
+{
+  "schema": "a3s.runtime.unit-spec.v2",
+  "unit_id": "workload:state-service:replica:1",
+  "generation": 3,
+  "class": "service",
+  "artifact": {
+    "uri": "oci://registry.example/a3s/state-service@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "media_type": "application/vnd.oci.image.manifest.v1+json"
+  },
+  "process": {
+    "command": ["/app/state-service"],
+    "args": ["serve", "--address=0.0.0.0:8080"],
+    "working_directory": "/data",
+    "environment": {}
+  },
+  "mounts": [
+    {
+      "name": "state",
+      "source": {
+        "kind": "volume",
+        "volume_id": "state-service-lineage-1"
+      },
+      "target": "/data",
+      "read_only": false
+    }
+  ],
+  "secrets": [
+    {
+      "name": "object namespace grant",
+      "reference": "secret://object-namespace/grant-1",
+      "target": {
+        "kind": "file",
+        "path": "/run/secrets/object-namespace",
+        "mode": 384
+      }
+    }
+  ],
+  "network": {
+    "mode": "service",
+    "ports": [
+      {
+        "name": "cell",
+        "container_port": 8080,
+        "protocol": "tcp"
+      }
+    ]
+  },
+  "resources": {
+    "cpu_millis": 1000,
+    "memory_bytes": 536870912,
+    "pids": 256,
+    "ephemeral_storage_bytes": 2147483648,
+    "execution_timeout_ms": null
+  },
+  "isolation": "sandbox",
+  "health": {
+    "probe": {
+      "kind": "http",
+      "port": "cell",
+      "path": "/health",
+      "expected_statuses": [200]
+    },
+    "interval_ms": 10000,
+    "timeout_ms": 2000,
+    "start_period_ms": 30000,
+    "success_threshold": 1,
+    "failure_threshold": 3
+  },
+  "restart": {
+    "kind": "always"
+  },
+  "outputs": [],
+  "semantics_profile_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+}

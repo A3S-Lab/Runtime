@@ -1,6 +1,6 @@
 # ADR 0005: Host Modern Stateless MCP as a Service Profile
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-30
 - Decision owners: A3S Runtime maintainers
 

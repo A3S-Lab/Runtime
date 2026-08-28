@@ -3,6 +3,7 @@
 mod client;
 mod clock;
 mod conformance;
+mod consumer;
 mod driver;
 mod error;
 mod managed;
@@ -21,6 +22,7 @@ pub use conformance::{
     RuntimeConformanceInventory, RuntimeConformanceProfile, RuntimeConformanceProfileEvidence,
     RuntimeConformanceProfileRequirements, RuntimeConformanceReport, RuntimeConformanceSuiteReport,
 };
+pub use consumer::RuntimeConsumerRequirements;
 pub use driver::RuntimeDriver;
 pub use error::{RuntimeError, RuntimeResult};
 pub use managed::ManagedRuntimeClient;

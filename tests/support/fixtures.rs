@@ -41,6 +41,7 @@ pub fn service_spec(unit_id: &str) -> RuntimeUnitSpec {
         restart: RestartPolicy::Always,
         outputs: Vec::new(),
         semantics_profile_digest: None,
+        identity_attachment_digest: None,
     }
 }
 

@@ -1,5 +1,5 @@
 {
-  "schema": "a3s.runtime.unit-spec.v2",
+  "schema": "a3s.runtime.unit-spec.v3",
   "unit_id": "workload:state-service:replica:1",
   "generation": 3,
   "class": "service",
@@ -71,5 +71,6 @@
     "kind": "always"
   },
   "outputs": [],
-  "semantics_profile_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  "semantics_profile_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "identity_attachment_digest": null
 }

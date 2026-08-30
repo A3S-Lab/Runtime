@@ -167,11 +167,10 @@ Choose the entry point that matches your role:
   equivalent fenced per-unit lease.
 
 > [!NOTE]
-> `a3s-runtime` 0.3.0 includes the capabilities v4 contract, typed Service
-> endpoint publication, and the frozen hosted MCP service consumer profile.
-> The unified consumer requirements API is implemented on the current branch
-> and remains subject to the repository's release and exact Box certification
-> gates.
+> `a3s-runtime` 0.4.0 uses capabilities v5, unit-spec/observation v3, typed
+> Service endpoints, and one opaque identity-attachment-to-attestation binding.
+> The unified consumer requirements API remains subject to the repository's
+> release and exact Box certification gates.
 
 ## Runtime specification
 
@@ -185,7 +184,9 @@ Choose the entry point that matches your role:
 - network mode, named ports, and TCP/UDP transport;
 - CPU, memory, process, optional ephemeral-storage, and execution limits;
 - isolation level, health checks, restart policy, and Task outputs;
-- an optional digest binding caller-owned execution semantics.
+- an optional digest binding caller-owned execution semantics; and
+- an optional opaque identity-attachment digest, repeated by exact provider
+  evidence without importing product policy.
 
 All top-level wire records carry explicit schema identifiers and reject unknown
 fields. Provider-specific labels, SDK handles, transport fields, and product
@@ -241,10 +242,11 @@ predicates:
 - isolation levels and network modes;
 - mount and health-check kinds;
 - CPU, memory, PID, ephemeral-storage, and execution-time controls;
-- optional lifecycle, logs, exec, usage, attestation, secrets, and output
-  features.
+- optional lifecycle, logs, exec, usage, attestation, identity attachment,
+  secrets, and output features.
 
-Capabilities v4 advertises `ServiceTcp` and `ServiceUdp` independently.
+Capabilities v5 advertises `ServiceTcp` and `ServiceUdp` independently and
+requires `IdentityAttachment` before an attached specification is dispatched.
 `NetworkMode::Service` specifications are rejected before reservation when a
 declared port uses an unadvertised transport.
 
@@ -318,6 +320,7 @@ reasoning:
 - [ADR 0004 — Typed Service endpoints and protocol capabilities](docs/adr/0004-type-service-endpoints-and-protocol-capabilities.md)
 - [ADR 0005 — Host modern stateless MCP as a Service profile](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
 - [ADR 0006 — Unify AI service consumers on Task, Service, and A3S Box](docs/adr/0006-unify-ai-service-consumers-on-task-service-and-box.md)
+- [ADR 0007 — Bind opaque identity attachment to provider attestation](docs/adr/0007-bind-opaque-identity-attachment-to-provider-attestation.md)
 - [Unified AI Service Runtime](docs/unified-ai-service-runtime.md)
 - [Roadmap](ROADMAP.md)
 - [Implementation plan](docs/implementation-plan.md)

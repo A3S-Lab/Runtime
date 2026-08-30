@@ -1,10 +1,12 @@
 use a3s_runtime::contract::{
-    HealthCheckKind, IsolationLevel, MountKind, NetworkMode, ResourceControl, RuntimeCapabilities,
-    RuntimeEvidence, RuntimeFeature, RuntimeHealthObservation, RuntimeHealthState,
-    RuntimeObservation, RuntimeServiceEndpoint, RuntimeUnitClass, RuntimeUnitSpec,
-    RuntimeUnitState,
+    ArtifactRef, HealthCheckKind, IsolationLevel, MountKind, NetworkMode, ResourceControl,
+    RuntimeCapabilities, RuntimeEvidence, RuntimeFeature, RuntimeHealthObservation,
+    RuntimeHealthState, RuntimeObservation, RuntimeServiceEndpoint, RuntimeUnitClass,
+    RuntimeUnitSpec, RuntimeUnitState,
 };
-use a3s_runtime::{ProviderId, RuntimeConsumerRequirements, RuntimeError};
+use a3s_runtime::{
+    ProviderId, RuntimeAttestationBinding, RuntimeConsumerRequirements, RuntimeError,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -80,6 +82,7 @@ fn running_observation(spec: &RuntimeUnitSpec, port_name: &str) -> RuntimeObserv
             provider_build: "consumer-fixture/test".into(),
             spec_digest: spec.digest().expect("spec digest"),
             semantics_profile_digest: spec.semantics_profile_digest.clone(),
+            identity_attachment_digest: spec.identity_attachment_digest.clone(),
             claims,
         }),
         provider_attestation: None,
@@ -191,6 +194,71 @@ fn rcon_fence_001_fails_closed_on_missing_profile_capability_or_evidence() {
     observation.evidence = None;
     assert!(matches!(
         stateful_service_requirements().accept_observation(&agent, &observation),
+        Err(RuntimeError::Protocol(_))
+    ));
+}
+
+#[test]
+fn rcon_identity_001_binds_one_opaque_attachment_to_exact_attested_evidence() {
+    let mut agent = spec("agent");
+    agent.identity_attachment_digest = Some(format!("sha256:{}", "9".repeat(64)));
+    let requirements = stateful_service_requirements().require_identity_attestation();
+
+    let mut provider = capabilities();
+    provider.features.extend([
+        RuntimeFeature::Attestation,
+        RuntimeFeature::IdentityAttachment,
+    ]);
+    requirements
+        .admit_spec(&agent, &provider)
+        .expect("identity-attached specification");
+
+    let mut observation = running_observation(&agent, "harness");
+    observation.provider_attestation = Some(ArtifactRef {
+        uri: format!(
+            "attestation://consumer-fixture/{}/{}@sha256:{}",
+            agent.unit_id,
+            agent.generation,
+            "8".repeat(64)
+        ),
+        digest: format!("sha256:{}", "8".repeat(64)),
+        media_type: "application/vnd.a3s.runtime-attestation.v1+json".into(),
+    });
+    requirements
+        .accept_observation(&agent, &observation)
+        .expect("exact identity-attached attestation");
+    let binding = RuntimeAttestationBinding::from_observation(&agent, &observation)
+        .expect("typed attestation binding");
+    assert_eq!(binding.unit_id, agent.unit_id);
+    assert_eq!(binding.generation, agent.generation);
+    assert_eq!(binding.digest().unwrap(), binding.digest().unwrap());
+
+    let mut drifted = observation.clone();
+    drifted
+        .evidence
+        .as_mut()
+        .expect("evidence")
+        .identity_attachment_digest = Some(format!("sha256:{}", "7".repeat(64)));
+    assert!(matches!(
+        requirements.accept_observation(&agent, &drifted),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let mut build_drifted = observation.clone();
+    build_drifted
+        .evidence
+        .as_mut()
+        .expect("evidence")
+        .provider_build = "consumer-fixture/other".into();
+    assert!(matches!(
+        requirements.accept_observation(&agent, &build_drifted),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let mut unattested = observation;
+    unattested.provider_attestation = None;
+    assert!(matches!(
+        requirements.accept_observation(&agent, &unattested),
         Err(RuntimeError::Protocol(_))
     ));
 }

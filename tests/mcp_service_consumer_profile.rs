@@ -42,6 +42,7 @@ fn running_observation(spec: &RuntimeUnitSpec) -> RuntimeObservation {
             provider_build: "a3s-box/mcp0.1-fixture".into(),
             spec_digest: spec.digest().expect("fixture spec digest"),
             semantics_profile_digest: spec.semantics_profile_digest.clone(),
+            identity_attachment_digest: spec.identity_attachment_digest.clone(),
             claims,
         }),
         provider_attestation: None,
@@ -56,7 +57,7 @@ fn rmcp_fix_001_uses_only_the_generic_runtime_service_contract() {
     let fixture = include_str!("fixtures/mcp0.1-runtime-unit-spec.json").replace("\r\n", "\n");
     assert_eq!(
         format!("{:x}", Sha256::digest(fixture.as_bytes())),
-        "5915c0ccac040fc4270ee5095de58b9115caee6e240464863cd6c3c1dcd59d23"
+        "0d17ff2e32fbee223a9a8649bbeb14a74e919ce656d7f26bca817060f52861c6"
     );
     let spec = fixture_spec();
     spec.validate().expect("valid Runtime Service fixture");

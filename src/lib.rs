@@ -1,5 +1,6 @@
 //! General provider-neutral Task and Service Runtime contracts for A3S.
 
+mod attestation;
 mod client;
 mod clock;
 mod conformance;
@@ -13,6 +14,7 @@ mod state;
 
 pub mod contract;
 
+pub use attestation::RuntimeAttestationBinding;
 pub use client::RuntimeClient;
 pub use clock::{RuntimeClock, SystemRuntimeClock};
 pub use conformance::{

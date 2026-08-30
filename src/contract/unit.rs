@@ -223,10 +223,11 @@ pub struct RuntimeUnitSpec {
     pub restart: RestartPolicy,
     pub outputs: Vec<RuntimeOutputSpec>,
     pub semantics_profile_digest: Option<String>,
+    pub identity_attachment_digest: Option<String>,
 }
 
 impl RuntimeUnitSpec {
-    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v2";
+    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v3";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -274,6 +275,9 @@ impl RuntimeUnitSpec {
         }
 
         if let Some(digest) = &self.semantics_profile_digest {
+            super::validate_digest(digest)?;
+        }
+        if let Some(digest) = &self.identity_attachment_digest {
             super::validate_digest(digest)?;
         }
 
@@ -359,6 +363,7 @@ mod tests {
                 max_bytes: 1024,
             }],
             semantics_profile_digest: None,
+            identity_attachment_digest: None,
         }
     }
 

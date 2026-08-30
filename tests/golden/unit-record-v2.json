@@ -1,7 +1,7 @@
 {
   "schema": "a3s.runtime.unit-record.v2",
   "spec": {
-    "schema": "a3s.runtime.unit-spec.v2",
+    "schema": "a3s.runtime.unit-spec.v3",
     "unit_id": "golden-task",
     "generation": 7,
     "class": "task",
@@ -35,13 +35,14 @@
       "kind": "never"
     },
     "outputs": [],
-    "semantics_profile_digest": null
+    "semantics_profile_digest": null,
+    "identity_attachment_digest": null
   },
   "observation": {
-    "schema": "a3s.runtime.observation.v2",
+    "schema": "a3s.runtime.observation.v3",
     "unit_id": "golden-task",
     "generation": 7,
-    "spec_digest": "sha256:3309c80ee072c47311be878a7fcde9818e484e9d186fa1c6eb78033fe5ef4d11",
+    "spec_digest": "sha256:77f470a135d8cc7adf4ea1d265f20ffbae030c8b148f0ffa83ef09be35802595",
     "class": "task",
     "state": "accepted",
     "provider_resource_id": null,

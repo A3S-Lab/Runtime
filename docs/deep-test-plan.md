@@ -332,7 +332,7 @@ fixtures and destructive cleanup.
 | Logs | Stream filtering, total order, cursor resume, same-timestamp records, limit, rotation gap, retention, large records |
 | Exec | Bounded unary state policy, timeout, exit code, output bounds, truncation, identity and generation binding |
 | Security | Digest pinning, label/metadata tamper, namespace separation, secret handling, least privilege, hostile input |
-| Evidence | Usage, evidence claims, profile binding, attestation validity for each advertised optional feature |
+| Evidence | Usage, evidence claims, semantics and identity-attachment binding, attestation validity for each advertised optional feature |
 
 The harness must always run the Base and Recovery profiles. It discovers
 optional profiles from capabilities and fails if an advertised capability has

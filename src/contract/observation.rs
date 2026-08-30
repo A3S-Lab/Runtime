@@ -75,14 +75,18 @@ pub struct RuntimeEvidence {
     pub provider_build: String,
     pub spec_digest: String,
     pub semantics_profile_digest: Option<String>,
+    pub identity_attachment_digest: Option<String>,
     pub claims: BTreeMap<String, String>,
 }
 
 impl RuntimeEvidence {
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         super::validate_nonempty("provider_build", &self.provider_build, 255)?;
         super::validate_digest(&self.spec_digest)?;
         if let Some(digest) = &self.semantics_profile_digest {
+            super::validate_digest(digest)?;
+        }
+        if let Some(digest) = &self.identity_attachment_digest {
             super::validate_digest(digest)?;
         }
         if self.claims.len() > 128
@@ -120,7 +124,7 @@ pub struct RuntimeObservation {
 }
 
 impl RuntimeObservation {
-    pub const SCHEMA: &'static str = "a3s.runtime.observation.v2";
+    pub const SCHEMA: &'static str = "a3s.runtime.observation.v3";
 
     pub(crate) fn accepted(spec: &RuntimeUnitSpec, observed_at_ms: u64) -> Result<Self, String> {
         Ok(Self {
@@ -213,6 +217,9 @@ impl RuntimeObservation {
             if evidence.spec_digest != self.spec_digest {
                 return Err("Runtime evidence does not bind the observation spec".into());
             }
+            if self.provider_build.as_ref() != Some(&evidence.provider_build) {
+                return Err("Runtime evidence does not bind the observation provider build".into());
+            }
         }
         let endpoints = self.service_endpoints()?;
         if !endpoints.is_empty()
@@ -229,6 +236,15 @@ impl RuntimeObservation {
         }
         if let Some(attestation) = &self.provider_attestation {
             attestation.validate()?;
+            if self.provider_resource_id.is_none()
+                || self.provider_build.is_none()
+                || self.evidence.is_none()
+            {
+                return Err(
+                    "Runtime provider attestation requires resource, build, and evidence identity"
+                        .into(),
+                );
+            }
         }
         Ok(())
     }
@@ -248,6 +264,17 @@ impl RuntimeObservation {
         }) {
             return Err(
                 "Runtime evidence semantics profile does not match the unit specification".into(),
+            );
+        }
+        if self.provider_resource_id.is_some()
+            && self
+                .evidence
+                .as_ref()
+                .and_then(|evidence| evidence.identity_attachment_digest.as_ref())
+                != spec.identity_attachment_digest.as_ref()
+        {
+            return Err(
+                "Runtime evidence identity attachment does not match the unit specification".into(),
             );
         }
         if self.state == RuntimeUnitState::Succeeded {

@@ -61,6 +61,7 @@ fn spec(unit_id: &str, class: RuntimeUnitClass, args: &[&str]) -> RuntimeUnitSpe
         },
         outputs: Vec::new(),
         semantics_profile_digest: None,
+        identity_attachment_digest: None,
     }
 }
 
@@ -297,6 +298,7 @@ async fn conf_profile_004_all_advertised_optional_families_activate() {
         RuntimeFeature::OutputArtifacts,
         RuntimeFeature::Usage,
         RuntimeFeature::Attestation,
+        RuntimeFeature::IdentityAttachment,
     ]);
     let profiles = required_runtime_profiles(&capabilities).expect("derive profiles");
     assert_eq!(
@@ -345,6 +347,7 @@ async fn conf_profile_005_requirements_expand_every_advertised_behavior() {
         RuntimeFeature::Logs,
         RuntimeFeature::Usage,
         RuntimeFeature::Attestation,
+        RuntimeFeature::IdentityAttachment,
     ]);
 
     let networking =
@@ -420,6 +423,9 @@ async fn conf_profile_005_requirements_expand_every_advertised_behavior() {
         .expect("evidence requirements");
     assert!(evidence.case_ids.contains("EVIDENCE-USAGE-VALIDITY"));
     assert!(evidence.case_ids.contains("EVIDENCE-ATTESTATION-VALIDITY"));
+    assert!(evidence
+        .case_ids
+        .contains("EVIDENCE-IDENTITY-ATTACHMENT-BINDING"));
     assert!(evidence
         .case_ids
         .contains("EVIDENCE-SEMANTICS-PROFILE-BINDING"));

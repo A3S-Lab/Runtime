@@ -50,6 +50,7 @@ fn service_spec(protocol: TransportProtocol) -> RuntimeUnitSpec {
         restart: RestartPolicy::Always,
         outputs: Vec::new(),
         semantics_profile_digest: None,
+        identity_attachment_digest: None,
     }
 }
 
@@ -73,6 +74,7 @@ fn running_observation(spec: &RuntimeUnitSpec) -> RuntimeObservation {
             provider_build: "provider/1".into(),
             spec_digest: spec.digest().expect("spec digest"),
             semantics_profile_digest: None,
+            identity_attachment_digest: None,
             claims: BTreeMap::new(),
         }),
         provider_attestation: None,

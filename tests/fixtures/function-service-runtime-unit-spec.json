@@ -1,5 +1,5 @@
 {
-  "schema": "a3s.runtime.unit-spec.v2",
+  "schema": "a3s.runtime.unit-spec.v3",
   "unit_id": "workload:function-http:replica:1",
   "generation": 2,
   "class": "service",
@@ -51,5 +51,6 @@
     "kind": "always"
   },
   "outputs": [],
-  "semantics_profile_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  "semantics_profile_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "identity_attachment_digest": null
 }

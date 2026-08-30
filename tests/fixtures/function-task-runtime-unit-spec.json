@@ -1,5 +1,5 @@
 {
-  "schema": "a3s.runtime.unit-spec.v2",
+  "schema": "a3s.runtime.unit-spec.v3",
   "unit_id": "execution:function-invocation:1",
   "generation": 1,
   "class": "task",
@@ -50,5 +50,6 @@
       "max_bytes": 1048576
     }
   ],
-  "semantics_profile_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  "semantics_profile_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "identity_attachment_digest": null
 }

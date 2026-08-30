@@ -2,7 +2,7 @@
   "status": "found",
   "schema": "a3s.runtime.inspection.v1",
   "observation": {
-    "schema": "a3s.runtime.observation.v2",
+    "schema": "a3s.runtime.observation.v3",
     "unit_id": "golden-service",
     "generation": 3,
     "spec_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",

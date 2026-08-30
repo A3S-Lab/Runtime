@@ -133,6 +133,7 @@ pub fn required_runtime_profiles(
     }
     if capabilities.supports_feature(RuntimeFeature::Usage)
         || capabilities.supports_feature(RuntimeFeature::Attestation)
+        || capabilities.supports_feature(RuntimeFeature::IdentityAttachment)
     {
         profiles.insert(RuntimeConformanceProfile::Evidence);
     }
@@ -166,6 +167,11 @@ pub fn runtime_profile_requirements(
         && capabilities.supports_feature(RuntimeFeature::Usage)
     {
         case_ids.insert("EVIDENCE-USAGE-VALIDITY".into());
+    }
+    if profile == RuntimeConformanceProfile::Evidence
+        && capabilities.supports_feature(RuntimeFeature::IdentityAttachment)
+    {
+        case_ids.insert("EVIDENCE-IDENTITY-ATTACHMENT-BINDING".into());
     }
     let capability_claims = capability_claims(capabilities, profile);
     Ok(RuntimeConformanceProfileRequirements {
@@ -502,10 +508,14 @@ fn capability_claims(
             claims
         }
         RuntimeConformanceProfile::Outputs => BTreeSet::from(["feature:OutputArtifacts".into()]),
-        RuntimeConformanceProfile::Evidence => [RuntimeFeature::Usage, RuntimeFeature::Attestation]
-            .into_iter()
-            .filter(|feature| capabilities.supports_feature(*feature))
-            .map(|feature| format!("feature:{feature:?}"))
-            .collect(),
+        RuntimeConformanceProfile::Evidence => [
+            RuntimeFeature::Usage,
+            RuntimeFeature::Attestation,
+            RuntimeFeature::IdentityAttachment,
+        ]
+        .into_iter()
+        .filter(|feature| capabilities.supports_feature(*feature))
+        .map(|feature| format!("feature:{feature:?}"))
+        .collect(),
     }
 }

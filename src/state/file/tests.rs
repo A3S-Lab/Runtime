@@ -112,6 +112,7 @@ fn spec() -> RuntimeUnitSpec {
         restart: RestartPolicy::Always,
         outputs: Vec::new(),
         semantics_profile_digest: None,
+        identity_attachment_digest: None,
     }
 }
 

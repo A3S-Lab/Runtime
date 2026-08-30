@@ -2,7 +2,7 @@ use crate::contract::{
     NetworkMode, RuntimeCapabilities, RuntimeFeature, RuntimeHealthState, RuntimeObservation,
     RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState,
 };
-use crate::{RuntimeError, RuntimeResult};
+use crate::{RuntimeAttestationBinding, RuntimeError, RuntimeResult};
 use std::collections::BTreeSet;
 
 /// Provider-neutral requirements imposed by one Runtime consumer profile.
@@ -17,6 +17,7 @@ pub struct RuntimeConsumerRequirements {
     semantics_profile_required: bool,
     health_required: bool,
     service_endpoints_required: bool,
+    identity_attestation_required: bool,
 }
 
 impl RuntimeConsumerRequirements {
@@ -27,6 +28,7 @@ impl RuntimeConsumerRequirements {
             semantics_profile_required: false,
             health_required: false,
             service_endpoints_required: false,
+            identity_attestation_required: false,
         }
     }
 
@@ -51,6 +53,16 @@ impl RuntimeConsumerRequirements {
     /// Requires a Service network declaration and exact observed endpoints.
     pub fn require_service_endpoints(mut self) -> Self {
         self.service_endpoints_required = true;
+        self
+    }
+
+    /// Requires one opaque identity attachment in the desired specification
+    /// and exact generation-bound provider attestation in the observation.
+    pub fn require_identity_attestation(mut self) -> Self {
+        self.identity_attestation_required = true;
+        self.required_features
+            .insert(RuntimeFeature::IdentityAttachment);
+        self.required_features.insert(RuntimeFeature::Attestation);
         self
     }
 
@@ -136,6 +148,10 @@ impl RuntimeConsumerRequirements {
                 "Runtime consumer requires exact Service endpoint evidence".into(),
             ));
         }
+        if self.identity_attestation_required {
+            RuntimeAttestationBinding::from_observation(spec, observation)
+                .map_err(RuntimeError::Protocol)?;
+        }
         Ok(())
     }
 
@@ -157,6 +173,9 @@ impl RuntimeConsumerRequirements {
         }
         if self.semantics_profile_required && spec.semantics_profile_digest.is_none() {
             return Err("Runtime consumer requires a semantics profile digest".into());
+        }
+        if self.identity_attestation_required && spec.identity_attachment_digest.is_none() {
+            return Err("Runtime consumer requires an identity attachment digest".into());
         }
         if self.health_required && spec.health.is_none() {
             return Err("Runtime consumer requires a Service health policy".into());

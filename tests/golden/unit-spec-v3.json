@@ -1,5 +1,5 @@
 {
-  "schema": "a3s.runtime.unit-spec.v2",
+  "schema": "a3s.runtime.unit-spec.v3",
   "unit_id": "golden-task",
   "generation": 7,
   "class": "task",
@@ -93,5 +93,6 @@
       "max_bytes": 4096
     }
   ],
-  "semantics_profile_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  "semantics_profile_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "identity_attachment_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 }

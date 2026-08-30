@@ -3,7 +3,7 @@
   "request_id": "golden-apply",
   "deadline_at_ms": 200000,
   "spec": {
-    "schema": "a3s.runtime.unit-spec.v2",
+    "schema": "a3s.runtime.unit-spec.v3",
     "unit_id": "golden-task",
     "generation": 7,
     "class": "task",
@@ -37,6 +37,7 @@
       "kind": "never"
     },
     "outputs": [],
-    "semantics_profile_digest": null
+    "semantics_profile_digest": null,
+    "identity_attachment_digest": null
   }
 }

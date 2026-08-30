@@ -85,12 +85,12 @@ fn assert_top_level_fixture<T>(
 #[test]
 fn ct_schema_001_every_top_level_wire_record_has_a_versioned_golden_fixture() {
     assert_top_level_fixture::<RuntimeCapabilities>(
-        include_str!("golden/capabilities-v4.json"),
+        include_str!("golden/capabilities-v5.json"),
         RuntimeCapabilities::SCHEMA,
         RuntimeCapabilities::validate,
     );
     assert_top_level_fixture::<RuntimeUnitSpec>(
-        include_str!("golden/unit-spec-v2.json"),
+        include_str!("golden/unit-spec-v3.json"),
         RuntimeUnitSpec::SCHEMA,
         RuntimeUnitSpec::validate,
     );
@@ -105,7 +105,7 @@ fn ct_schema_001_every_top_level_wire_record_has_a_versioned_golden_fixture() {
         RuntimeActionRequest::validate,
     );
     assert_top_level_fixture::<RuntimeObservation>(
-        include_str!("golden/observation-v2.json"),
+        include_str!("golden/observation-v3.json"),
         RuntimeObservation::SCHEMA,
         RuntimeObservation::validate,
     );
@@ -159,21 +159,21 @@ fn ct_schema_001_every_top_level_wire_record_has_a_versioned_golden_fixture() {
 #[test]
 fn ct_digest_001_golden_request_and_spec_digests_are_stable() {
     let unit: RuntimeUnitSpec =
-        serde_json::from_str(include_str!("golden/unit-spec-v2.json")).unwrap();
+        serde_json::from_str(include_str!("golden/unit-spec-v3.json")).unwrap();
     assert_eq!(
         unit.digest().unwrap(),
-        "sha256:56d815af40b2bcb083a0fd8b42bcf4501330362d81b3850a45d901725d828610"
+        "sha256:2d45e69ff2dd43f933cc5b733eda674c30048578c27b5b5bfe1503dbc19d0723"
     );
 
     let apply: RuntimeApplyRequest =
         serde_json::from_str(include_str!("golden/apply-request-v1.json")).unwrap();
     assert_eq!(
         apply.spec.digest().unwrap(),
-        "sha256:3309c80ee072c47311be878a7fcde9818e484e9d186fa1c6eb78033fe5ef4d11"
+        "sha256:77f470a135d8cc7adf4ea1d265f20ffbae030c8b148f0ffa83ef09be35802595"
     );
     assert_eq!(
         apply.digest().unwrap(),
-        "sha256:e178a719503c68db140756ae8568c3e51da35843de1133c3a6585520f0f4ea91"
+        "sha256:98b0962e04dd1bcc1f8aa4f95ba43919247bf829b9e398a3dc261cfe474f8777"
     );
 
     let exec: RuntimeExecRequest =

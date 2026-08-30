@@ -2,7 +2,7 @@
 
 ## 1. Scope and authority
 
-**Status as of 2026-08-28.**
+**Status as of 2026-08-30.**
 
 This roadmap describes work owned by the A3S Runtime repository. The
 [implementation plan](docs/implementation-plan.md) owns task order, and the
@@ -29,6 +29,8 @@ Runtime owns:
 - typed, generation-bound Service endpoint observations;
 - provider recovery, fencing, conformance, and cleanup evidence; and
 - opaque binding of a product semantics profile through its immutable digest;
+- opaque binding of caller-owned identity attachment intent to exact provider
+  evidence and attestation without parsing product policy;
 - one composable `RuntimeConsumerRequirements` admission/readiness boundary;
   and
 - the certified Runtime-to-A3S-Box provider boundary for the production path.
@@ -61,6 +63,7 @@ Those boundaries produce this ownership map:
 | General Task and Service contract | Implemented foundation; the complete `R00`-`R22` release audit remains authoritative | Preserve one generic lifecycle contract |
 | Typed TCP Service endpoints | Implemented by ADR 0004 and bound to provider build, specification digest, and generation | Reuse for hosted MCP; do not add an MCP endpoint registry |
 | Product semantics binding | Opaque `semantics_profile_digest` is part of the existing contract | Cloud owns every product profile; Runtime verifies only the binding |
+| Workload identity attachment | Component complete (2026-08-30): unit-spec/observation v3 and capabilities v5 expose one opaque attachment digest, one typed attestation projection, and one composed consumer requirement | Cloud owns policy, Fleet/Claim composition, freshness, and issuance; Box must certify exact provider evidence |
 | Unified consumer requirements | Implemented component foundation: class, generic feature, semantics evidence, health, and endpoint requirements compose through one API | Cloud consumers must adopt this API instead of duplicating generic admission checks |
 | AaaS/FaaS/MCP/Durable Cell fixtures | Component fixtures pass for Agent Service, Function Task, stateless Function/MCP Service, and Durable Cell Service without new Runtime classes | Fixtures prove composition, not product availability |
 | A3S Box provider certification | The Box repository implements `BoxRuntimeDriver` and capability-triggered conformance fixtures; exact-revision re-certification and profile gaps such as `Outbound` remain open | No Cloud product may bypass Box certification or infer an unadvertised capability |
@@ -84,6 +87,8 @@ Runtime supports Cloud product profiles through composition, not inheritance:
 | `RCON-01` | Component complete (2026-08-28) | Export one provider-neutral consumer requirements abstraction | Focused positive and fail-closed tests pass; `src/contract` stays product-neutral |
 | `RCON-02` | Component complete (2026-08-28) | Freeze Agent, Function Task/Service, MCP, and Durable Cell consumer fixtures | All fixtures use only `Task` or `Service` and exact semantics evidence |
 | `RCON-03` | In progress | Pin Cloud to the exact Runtime revision and replace duplicate generic consumer checks | Cloud architecture and consumer tests prove one shared admission/readiness mechanism |
+| `RWI-01` | Component complete (2026-08-30) | Bind one opaque identity attachment to the exact Runtime Unit generation and provider attestation | Golden schemas, fail-closed consumer tests, and ADR 0007 pass without product fields entering Runtime |
+| `RWI-02` | In progress | Re-certify Box and pin Cloud to the exact attachment-aware Runtime revision | Box repeats the digest in generation-bound evidence; Cloud composes only the typed Runtime binding with owner ports |
 | `RBOX-01` | Driver and conformance harness implemented; exact-revision evidence pending | Certify the A3S Box Runtime driver and close each required capability gap | Base, Recovery, and every advertised profile pass with baseline inventory restored |
 | `RBOX-02` | Planned | Run exact-revision Gateway/Cloud/Runtime/Box compatibility gates for each service profile | Requests enter through Gateway, targets bind exact observations, failures recover, cleanup is complete |
 

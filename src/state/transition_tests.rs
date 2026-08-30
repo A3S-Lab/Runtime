@@ -67,6 +67,7 @@ fn spec(class: RuntimeUnitClass) -> RuntimeUnitSpec {
         },
         outputs: Vec::new(),
         semantics_profile_digest: None,
+        identity_attachment_digest: None,
     }
 }
 

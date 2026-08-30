@@ -27,6 +27,7 @@ pub enum RuntimeFeature {
     Exec,
     Usage,
     Attestation,
+    IdentityAttachment,
     SecretReferences,
     OutputArtifacts,
 }
@@ -50,7 +51,7 @@ pub struct RuntimeCapabilities {
 }
 
 impl RuntimeCapabilities {
-    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v4";
+    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v5";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -169,6 +170,11 @@ impl RuntimeCapabilities {
             && !self.supports_feature(RuntimeFeature::Attestation)
         {
             missing.push("feature:Attestation".into());
+        }
+        if spec.identity_attachment_digest.is_some()
+            && !self.supports_feature(RuntimeFeature::IdentityAttachment)
+        {
+            missing.push("feature:IdentityAttachment".into());
         }
         missing.sort();
         missing.dedup();

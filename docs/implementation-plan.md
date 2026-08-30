@@ -65,6 +65,7 @@ real-provider evidence is absent.
 | R32 | Certify AaaS, FaaS, and Durable Cell Box profiles | R17, R31 | Real Box lifecycle, recovery, endpoint, mount, Secret, output, cleanup, and profile evidence passes per declared profile |
 | R33 | Certify WaaS executable-node composition | R31-R32 | Flow replay chains/parallels Agent and Function children without a Workflow Runtime Unit or duplicate product intent |
 | R34 | Run the Gateway/Cloud/Runtime/Box service-platform gate | R22, R27, R32-R33 | Exact revisions prove public Gateway ingress, internal endpoint admission, recovery, tenant isolation, and zero residue |
+| R35 | Bind workload identity intent without product coupling | R01, R10, R30 | Unit-spec/observation v3 and capabilities v5 carry one opaque attachment digest; the unified consumer projection rejects missing or drifted provider attestation |
 
 ## Work packages
 

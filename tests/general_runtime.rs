@@ -598,6 +598,7 @@ fn task(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
         restart: RestartPolicy::Never,
         outputs: vec![],
         semantics_profile_digest: None,
+        identity_attachment_digest: None,
     }
 }
 
@@ -704,6 +705,7 @@ fn publish_test_endpoints(
         provider_build: provider_build.into(),
         spec_digest: spec.digest().expect("valid test specification"),
         semantics_profile_digest: spec.semantics_profile_digest.clone(),
+        identity_attachment_digest: spec.identity_attachment_digest.clone(),
         claims: BTreeMap::new(),
     });
     for (index, port) in spec.network.ports.iter().enumerate() {

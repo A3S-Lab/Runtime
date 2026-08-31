@@ -54,6 +54,7 @@ fn spec(unit_id: &str, class: RuntimeUnitClass, args: &[&str]) -> RuntimeUnitSpe
         },
         isolation: IsolationLevel::Container,
         health: None,
+        service_lifecycle: None,
         restart: if class == RuntimeUnitClass::Task {
             RestartPolicy::Never
         } else {
@@ -299,6 +300,7 @@ async fn conf_profile_004_all_advertised_optional_families_activate() {
         RuntimeFeature::Usage,
         RuntimeFeature::Attestation,
         RuntimeFeature::IdentityAttachment,
+        RuntimeFeature::ServiceLifecycle,
     ]);
     let profiles = required_runtime_profiles(&capabilities).expect("derive profiles");
     assert_eq!(
@@ -348,6 +350,7 @@ async fn conf_profile_005_requirements_expand_every_advertised_behavior() {
         RuntimeFeature::Usage,
         RuntimeFeature::Attestation,
         RuntimeFeature::IdentityAttachment,
+        RuntimeFeature::ServiceLifecycle,
     ]);
 
     let networking =
@@ -389,11 +392,18 @@ async fn conf_profile_005_requirements_expand_every_advertised_behavior() {
             "HEALTH-PROBE-HTTP".into(),
             "HEALTH-PROBE-TCP".into(),
             "HEALTH-PROBE-TIMEOUT".into(),
+            "HEALTH-READINESS-LIVENESS-SEPARATION".into(),
+            "HEALTH-LIVENESS-TRANSITION".into(),
+            "HEALTH-GRACEFUL-STOP".into(),
+            "HEALTH-GRACE-DEADLINE-FORCE".into(),
             "HEALTH-START-PERIOD".into(),
             "HEALTH-THRESHOLD-TRANSITION".into(),
             "HEALTH-UNHEALTHY-EXIT".into(),
         ])
     );
+    assert!(health
+        .capability_claims
+        .contains("feature:ServiceLifecycle"));
 
     let resources =
         runtime_profile_requirements(&capabilities, RuntimeConformanceProfile::Resources)

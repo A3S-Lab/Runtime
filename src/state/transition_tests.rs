@@ -61,6 +61,7 @@ fn spec(class: RuntimeUnitClass) -> RuntimeUnitSpec {
         },
         isolation: IsolationLevel::Container,
         health: None,
+        service_lifecycle: None,
         restart: match class {
             RuntimeUnitClass::Task => RestartPolicy::Never,
             RuntimeUnitClass::Service => RestartPolicy::Always,
@@ -90,6 +91,7 @@ fn observation(
         started_at_ms: provider_backed.then_some(100),
         finished_at_ms: state.is_terminal().then_some(observed_at_ms),
         health: None,
+        liveness: None,
         outputs: Vec::new(),
         usage: None,
         evidence: None,

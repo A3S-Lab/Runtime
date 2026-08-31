@@ -1,8 +1,8 @@
 use a3s_runtime::contract::{
-    ArtifactRef, HealthCheckKind, IsolationLevel, MountKind, NetworkMode, ResourceControl,
-    RuntimeCapabilities, RuntimeEvidence, RuntimeFeature, RuntimeHealthObservation,
-    RuntimeHealthState, RuntimeObservation, RuntimeServiceEndpoint, RuntimeUnitClass,
-    RuntimeUnitSpec, RuntimeUnitState,
+    ArtifactRef, HealthCheckKind, HealthProbe, IsolationLevel, MountKind, NetworkMode,
+    ResourceControl, RuntimeCapabilities, RuntimeEvidence, RuntimeFeature,
+    RuntimeHealthObservation, RuntimeHealthState, RuntimeObservation, RuntimeServiceEndpoint,
+    RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState,
 };
 use a3s_runtime::{
     ProviderId, RuntimeAttestationBinding, RuntimeConsumerRequirements, RuntimeError,
@@ -49,6 +49,7 @@ fn capabilities() -> RuntimeCapabilities {
             RuntimeFeature::Exec,
             RuntimeFeature::SecretReferences,
             RuntimeFeature::OutputArtifacts,
+            RuntimeFeature::ServiceLifecycle,
         ],
     }
 }
@@ -76,6 +77,14 @@ fn running_observation(spec: &RuntimeUnitSpec, port_name: &str) -> RuntimeObserv
             checked_at_ms: 20_000,
             message: None,
         }),
+        liveness: spec
+            .service_lifecycle
+            .as_ref()
+            .map(|_| RuntimeHealthObservation {
+                state: RuntimeHealthState::Healthy,
+                checked_at_ms: 20_000,
+                message: None,
+            }),
         outputs: Vec::new(),
         usage: None,
         evidence: Some(RuntimeEvidence {
@@ -94,6 +103,7 @@ fn stateful_service_requirements() -> RuntimeConsumerRequirements {
     RuntimeConsumerRequirements::new(RuntimeUnitClass::Service)
         .require_semantics_profile()
         .require_health()
+        .require_service_lifecycle()
         .require_service_endpoints()
         .require_feature(RuntimeFeature::ServiceTcp)
         .require_feature(RuntimeFeature::SecretReferences)
@@ -194,6 +204,85 @@ fn rcon_fence_001_fails_closed_on_missing_profile_capability_or_evidence() {
     observation.evidence = None;
     assert!(matches!(
         stateful_service_requirements().accept_observation(&agent, &observation),
+        Err(RuntimeError::Protocol(_))
+    ));
+}
+
+#[test]
+fn rcon_lifecycle_001_fails_closed_on_missing_capability_or_liveness_evidence() {
+    let agent = spec("agent");
+    let requirements = stateful_service_requirements();
+
+    let mut insufficient = capabilities();
+    insufficient
+        .features
+        .retain(|feature| *feature != RuntimeFeature::ServiceLifecycle);
+    assert!(matches!(
+        requirements.admit_spec(&agent, &insufficient),
+        Err(RuntimeError::UnsupportedCapabilities(missing))
+            if missing == vec!["feature:ServiceLifecycle"]
+    ));
+
+    let mut observation = running_observation(&agent, "harness");
+    observation.liveness = None;
+    assert!(matches!(
+        requirements.accept_observation(&agent, &observation),
+        Err(RuntimeError::Protocol(_))
+    ));
+
+    let mut observation = running_observation(&agent, "harness");
+    observation.liveness.as_mut().expect("liveness").state = RuntimeHealthState::Unhealthy;
+    assert!(!observation.converges(&agent));
+    assert!(matches!(
+        requirements.accept_observation(&agent, &observation),
+        Err(RuntimeError::Protocol(_))
+    ));
+}
+
+#[test]
+fn rcon_lifecycle_002_validates_capability_dependencies_and_liveness_probe_kind() {
+    let agent = spec("agent");
+
+    let mut invalid = capabilities();
+    invalid
+        .features
+        .retain(|feature| *feature != RuntimeFeature::Stop);
+    assert!(invalid.validate().is_err());
+
+    let mut invalid = capabilities();
+    invalid.health_check_kinds.clear();
+    assert!(invalid.validate().is_err());
+
+    let mut invalid = capabilities();
+    invalid
+        .unit_classes
+        .retain(|class| *class != RuntimeUnitClass::Service);
+    assert!(invalid.validate().is_err());
+
+    let mut command_liveness = agent;
+    command_liveness
+        .service_lifecycle
+        .as_mut()
+        .expect("lifecycle")
+        .liveness
+        .probe = HealthProbe::Command {
+        command: vec!["/app/health-live".into()],
+    };
+    assert!(matches!(
+        stateful_service_requirements().admit_spec(&command_liveness, &capabilities()),
+        Err(RuntimeError::UnsupportedCapabilities(missing))
+            if missing == vec!["health_check:Command"]
+    ));
+
+    let stateless = spec("function_service");
+    let mut excess = running_observation(&stateless, "http");
+    excess.liveness = Some(RuntimeHealthObservation {
+        state: RuntimeHealthState::Healthy,
+        checked_at_ms: 20_000,
+        message: None,
+    });
+    assert!(matches!(
+        stateless_service_requirements().accept_observation(&stateless, &excess),
         Err(RuntimeError::Protocol(_))
     ));
 }

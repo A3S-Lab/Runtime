@@ -178,6 +178,7 @@ impl ProcessRaceDriver {
                 unknown.observed_at_ms = unknown.observed_at_ms.saturating_add(1);
                 unknown.finished_at_ms = None;
                 unknown.health = None;
+                unknown.liveness = None;
                 unknown.outputs.clear();
                 unknown.failure = None;
                 return Ok(unknown);
@@ -399,6 +400,7 @@ fn observation_from_resource(
         .is_terminal()
         .then_some(observation.observed_at_ms);
     observation.health = None;
+    observation.liveness = None;
     observation.outputs.clear();
     observation.failure = (resource.state == RuntimeUnitState::Failed).then(|| RuntimeFailure {
         code: "fixture_failure".into(),

@@ -5,7 +5,8 @@ use a3s_runtime::contract::{
     RuntimeHealthCheck, RuntimeHealthObservation, RuntimeHealthState, RuntimeInspection,
     RuntimeLogChunk, RuntimeLogQuery, RuntimeLogStream, RuntimeNetworkSpec, RuntimeObservation,
     RuntimeOutputArtifact, RuntimeOutputSpec, RuntimePort, RuntimeProcessSpec, RuntimeRemoval,
-    RuntimeServiceEndpoint, RuntimeUnitClass, RuntimeUnitSpec, RuntimeUnitState, TransportProtocol,
+    RuntimeServiceEndpoint, RuntimeServiceLifecycle, RuntimeUnitClass, RuntimeUnitSpec,
+    RuntimeUnitState, TransportProtocol,
 };
 use a3s_runtime::{
     verify_runtime_provider, FileRuntimeStateStore, ManagedRuntimeClient, ProviderId,
@@ -204,6 +205,14 @@ impl RuntimeDriver for GenerationDriver {
             checked_at_ms: observation.observed_at_ms,
             message: None,
         });
+        observation.liveness = spec
+            .service_lifecycle
+            .as_ref()
+            .map(|_| RuntimeHealthObservation {
+                state: RuntimeHealthState::Healthy,
+                checked_at_ms: observation.observed_at_ms,
+                message: None,
+            });
         publish_test_endpoints(spec, &mut observation, "generation-driver/1")?;
         observation
             .validate_against(spec)
@@ -380,11 +389,26 @@ impl RuntimeDriver for TestDriver {
         observation.observed_at_ms = NOW + 1;
         observation.started_at_ms = Some(NOW);
         observation.finished_at_ms = observation.state.is_terminal().then_some(NOW + 1);
-        observation.health = spec.health.as_ref().map(|_| RuntimeHealthObservation {
-            state: RuntimeHealthState::Healthy,
-            checked_at_ms: NOW + 1,
-            message: None,
-        });
+        observation.health = (observation.state == RuntimeUnitState::Running)
+            .then(|| {
+                spec.health.as_ref().map(|_| RuntimeHealthObservation {
+                    state: RuntimeHealthState::Healthy,
+                    checked_at_ms: NOW + 1,
+                    message: None,
+                })
+            })
+            .flatten();
+        observation.liveness = (observation.state == RuntimeUnitState::Running)
+            .then(|| {
+                spec.service_lifecycle
+                    .as_ref()
+                    .map(|_| RuntimeHealthObservation {
+                        state: RuntimeHealthState::Healthy,
+                        checked_at_ms: NOW + 1,
+                        message: None,
+                    })
+            })
+            .flatten();
         publish_test_endpoints(spec, &mut observation, "test-driver/1")?;
         observation.outputs = if observation.state == RuntimeUnitState::Succeeded {
             spec.outputs
@@ -442,6 +466,7 @@ impl RuntimeDriver for TestDriver {
             .then_some(observation.observed_at_ms);
         if observation.state.is_terminal() {
             observation.health = None;
+            observation.liveness = None;
             observation.clear_service_endpoints();
         }
         observation.outputs.clear();
@@ -595,6 +620,7 @@ fn task(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
         resources: resources(Some(60_000)),
         isolation: IsolationLevel::Container,
         health: None,
+        service_lifecycle: None,
         restart: RestartPolicy::Never,
         outputs: vec![],
         semantics_profile_digest: None,
@@ -626,6 +652,26 @@ fn service(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
         start_period_ms: 0,
         success_threshold: 1,
         failure_threshold: 3,
+    });
+    spec
+}
+
+fn service_with_lifecycle(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
+    let mut spec = service(unit_id, generation);
+    spec.service_lifecycle = Some(RuntimeServiceLifecycle {
+        liveness: RuntimeHealthCheck {
+            probe: HealthProbe::Http {
+                port: "http".into(),
+                path: "/health/live".into(),
+                expected_statuses: vec![200],
+            },
+            interval_ms: 5_000,
+            timeout_ms: 1_000,
+            start_period_ms: 0,
+            success_threshold: 1,
+            failure_threshold: 3,
+        },
+        shutdown_grace_seconds: 30,
     });
     spec
 }
@@ -2004,10 +2050,18 @@ async fn lc_exec_001_pending_replay_cannot_extend_original_relative_deadline() {
 
 #[tokio::test]
 async fn provider_loss_becomes_a_durable_unknown_observation() {
-    let driver = Arc::new(TestDriver::new());
+    let mut driver = TestDriver::new();
+    driver
+        .capabilities
+        .features
+        .push(RuntimeFeature::ServiceLifecycle);
+    let driver = Arc::new(driver);
     let (client, store) = driver.client();
     let running = client
-        .apply(&apply("apply-loss", service("service-loss", 1)))
+        .apply(&apply(
+            "apply-loss",
+            service_with_lifecycle("service-loss", 1),
+        ))
         .await
         .unwrap();
     driver.missing_on_inspect.store(true, Ordering::SeqCst);
@@ -2022,6 +2076,8 @@ async fn provider_loss_becomes_a_durable_unknown_observation() {
         running.provider_resource_id
     );
     assert!(observation.observed_at_ms >= running.observed_at_ms);
+    assert!(observation.health.is_none());
+    assert!(observation.liveness.is_none());
     assert_eq!(
         store.load("service-loss").await.unwrap().observation,
         *observation
@@ -2030,9 +2086,14 @@ async fn provider_loss_becomes_a_durable_unknown_observation() {
 
 #[tokio::test]
 async fn same_generation_apply_recovers_a_lost_provider_unit_once() {
-    let driver = Arc::new(TestDriver::new());
+    let mut driver = TestDriver::new();
+    driver
+        .capabilities
+        .features
+        .push(RuntimeFeature::ServiceLifecycle);
+    let driver = Arc::new(driver);
     let (client, store) = driver.client();
-    let spec = service("service-recovery", 1);
+    let spec = service_with_lifecycle("service-recovery", 1);
     let running = client
         .apply(&apply("apply-recovery", spec.clone()))
         .await

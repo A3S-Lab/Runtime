@@ -60,12 +60,13 @@ real-provider evidence is absent.
 | R27 | Run the Cloud and Gateway compatibility gate | R26 | Pinned Runtime/Box/Cloud/Gateway revisions consume only exact typed observations and one profile digest |
 | R28 | Audit the Runtime `MCP0.2` claim | R22-R27 | Every Runtime-owned `MCP0.2` criterion maps to reviewable exact-SHA evidence |
 | R29 | Freeze the unified Cloud consumer boundary | R11, ADR 0006 | Agent, Function, MCP, and Durable Cell fixtures use only Task/Service; Workflow remains orchestration-only |
-| R30 | Export one consumer admission/readiness abstraction | R29 | `RuntimeConsumerRequirements` composes class/features/profile/health/endpoints and fails closed in focused tests |
+| R30 | Export one consumer admission/readiness abstraction | R29 | `RuntimeConsumerRequirements` composes class/features/profile/readiness/liveness/endpoints and fails closed in focused tests |
 | R31 | Migrate Cloud generic checks to the shared abstraction | R30 | Exact Runtime revision is pinned; duplicate class/capability/profile/readiness predicates are removed without moving product checks |
 | R32 | Certify AaaS, FaaS, and Durable Cell Box profiles | R17, R31 | Real Box lifecycle, recovery, endpoint, mount, Secret, output, cleanup, and profile evidence passes per declared profile |
 | R33 | Certify WaaS executable-node composition | R31-R32 | Flow replay chains/parallels Agent and Function children without a Workflow Runtime Unit or duplicate product intent |
 | R34 | Run the Gateway/Cloud/Runtime/Box service-platform gate | R22, R27, R32-R33 | Exact revisions prove public Gateway ingress, internal endpoint admission, recovery, tenant isolation, and zero residue |
-| R35 | Bind workload identity intent without product coupling | R01, R10, R30 | Unit-spec/observation v3 and capabilities v5 carry one opaque attachment digest; the unified consumer projection rejects missing or drifted provider attestation |
+| R35 | Bind workload identity intent without product coupling | R01, R10, R30 | Current unit-spec/observation v4 and capabilities v6 carry one opaque attachment digest; the unified consumer projection rejects missing or drifted provider attestation |
+| R36 | Separate Service readiness, liveness, and graceful stop | R01, R11, R30 | v4/v6 contracts bind separate evidence and activate four provider conformance cases; Box and Cloud consume the exact policy without product fields |
 
 ## Work packages
 
@@ -127,7 +128,8 @@ Deliverables:
 
 - stale-generation container discovery and cleanup;
 - provider identity and label-tamper enforcement;
-- Task success/failure/timeout and Service health profiles;
+- Task success/failure/timeout and Service readiness/liveness/graceful-stop
+  profiles;
 - network, volume, tmpfs, CPU, memory, PIDs, restart, and log-cursor probes;
 - node-agent/Docker restart and external-deletion recovery;
 - Cloud projection, command journal, redelivery, reconciliation, cancellation,
@@ -182,10 +184,10 @@ Deliverables:
 - an explicit prohibition on MCP product fields, JSON-RPC parsing, routing,
   authorization, and protocol sessions in Runtime core;
 - a canonical fixture manifest binding the MCP server image, Service
-  specification, semantics profile digest, declared TCP port, health probe,
-  and expected endpoint evidence;
-- real A3S Box apply, inspect, health, logs, stop, remove, restart, generation,
-  and cleanup evidence;
+  specification, semantics profile digest, declared TCP port, readiness probe,
+  optional liveness/graceful-stop policy, and expected endpoint evidence;
+- real A3S Box apply, inspect, readiness, liveness, logs, graceful/forced stop,
+  remove, restart, generation, and cleanup evidence;
 - distinct Runtime Unit identities and typed endpoints for every replica;
 - a black-box `server/discover` reachability probe whose protocol assertions
   remain in the consumer harness; and
@@ -201,6 +203,10 @@ consumer abstraction and Agent Service, Function Task/Service, stateless MCP
 Service, and Durable Cell Service fixtures pass focused tests. Cloud adoption,
 real Box evidence, Workflow composition, and the joint Gateway gate remain
 open.
+
+Checkpoint (2026-08-31): `R36` is Runtime-component complete. The contract and
+consumer fixture are not provider evidence; Box implementation and exact
+Cloud projection remain required before a hosted Agent capability claim.
 
 Deliverables:
 

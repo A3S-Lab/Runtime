@@ -25,7 +25,8 @@ pub use protocol::{
 pub use resource::{IsolationLevel, ResourceLimits};
 pub use unit::{
     HealthCheckKind, HealthProbe, MountKind, RestartPolicy, RuntimeHealthCheck, RuntimeMount,
-    RuntimeMountSource, RuntimeOutputSpec, RuntimeUnitClass, RuntimeUnitSpec,
+    RuntimeMountSource, RuntimeOutputSpec, RuntimeServiceLifecycle, RuntimeUnitClass,
+    RuntimeUnitSpec,
 };
 
 pub(crate) fn validate_digest(value: &str) -> Result<(), String> {

@@ -36,6 +36,7 @@ fn running_observation(spec: &RuntimeUnitSpec) -> RuntimeObservation {
             checked_at_ms: 20_000,
             message: None,
         }),
+        liveness: None,
         outputs: Vec::new(),
         usage: None,
         evidence: Some(RuntimeEvidence {
@@ -57,7 +58,7 @@ fn rmcp_fix_001_uses_only_the_generic_runtime_service_contract() {
     let fixture = include_str!("fixtures/mcp0.1-runtime-unit-spec.json").replace("\r\n", "\n");
     assert_eq!(
         format!("{:x}", Sha256::digest(fixture.as_bytes())),
-        "0d17ff2e32fbee223a9a8649bbeb14a74e919ce656d7f26bca817060f52861c6"
+        "f7e7b84867c5c646ad5a02d9e7be65a23ce7f6eb813ae1e1bf4786d4db602f4a"
     );
     let spec = fixture_spec();
     spec.validate().expect("valid Runtime Service fixture");

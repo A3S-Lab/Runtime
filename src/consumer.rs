@@ -16,6 +16,7 @@ pub struct RuntimeConsumerRequirements {
     required_features: BTreeSet<RuntimeFeature>,
     semantics_profile_required: bool,
     health_required: bool,
+    service_lifecycle_required: bool,
     service_endpoints_required: bool,
     identity_attestation_required: bool,
 }
@@ -27,6 +28,7 @@ impl RuntimeConsumerRequirements {
             required_features: BTreeSet::new(),
             semantics_profile_required: false,
             health_required: false,
+            service_lifecycle_required: false,
             service_endpoints_required: false,
             identity_attestation_required: false,
         }
@@ -44,9 +46,18 @@ impl RuntimeConsumerRequirements {
         self
     }
 
-    /// Requires a Service health policy and a healthy running observation.
+    /// Requires a Service readiness policy and a ready running observation.
     pub fn require_health(mut self) -> Self {
         self.health_required = true;
+        self
+    }
+
+    /// Requires distinct Service liveness evidence plus a bounded graceful
+    /// shutdown policy.
+    pub fn require_service_lifecycle(mut self) -> Self {
+        self.service_lifecycle_required = true;
+        self.required_features
+            .insert(RuntimeFeature::ServiceLifecycle);
         self
     }
 
@@ -138,6 +149,16 @@ impl RuntimeConsumerRequirements {
             ));
         }
 
+        if self.service_lifecycle_required
+            && (observation.state != RuntimeUnitState::Running
+                || observation.liveness.as_ref().map(|health| health.state)
+                    != Some(RuntimeHealthState::Healthy))
+        {
+            return Err(RuntimeError::Protocol(
+                "Runtime consumer requires a live running Service observation".into(),
+            ));
+        }
+
         if self.service_endpoints_required
             && observation
                 .service_endpoints()
@@ -156,10 +177,14 @@ impl RuntimeConsumerRequirements {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if (self.health_required || self.service_endpoints_required)
+        if (self.health_required
+            || self.service_lifecycle_required
+            || self.service_endpoints_required)
             && self.unit_class != RuntimeUnitClass::Service
         {
-            return Err("health and endpoint requirements apply only to Runtime Service".into());
+            return Err(
+                "health, lifecycle, and endpoint requirements apply only to Runtime Service".into(),
+            );
         }
         Ok(())
     }
@@ -178,7 +203,10 @@ impl RuntimeConsumerRequirements {
             return Err("Runtime consumer requires an identity attachment digest".into());
         }
         if self.health_required && spec.health.is_none() {
-            return Err("Runtime consumer requires a Service health policy".into());
+            return Err("Runtime consumer requires a Service readiness policy".into());
+        }
+        if self.service_lifecycle_required && spec.service_lifecycle.is_none() {
+            return Err("Runtime consumer requires a Service lifecycle policy".into());
         }
         if self.service_endpoints_required
             && (spec.network.mode != NetworkMode::Service || spec.network.ports.is_empty())

@@ -174,6 +174,27 @@ impl RuntimeHealthCheck {
     }
 }
 
+/// Optional Service lifecycle policy that is distinct from readiness.
+///
+/// Providers advertising `ServiceLifecycle` sample the liveness probe and
+/// honor the declared graceful-stop deadline before forcing termination.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeServiceLifecycle {
+    pub liveness: RuntimeHealthCheck,
+    pub shutdown_grace_seconds: u32,
+}
+
+impl RuntimeServiceLifecycle {
+    fn validate(&self, network: &RuntimeNetworkSpec) -> Result<(), String> {
+        self.liveness.validate(network)?;
+        if !(1..=3_600).contains(&self.shutdown_grace_seconds) {
+            return Err("Service shutdown_grace_seconds must be between 1 and 3600".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RestartPolicy {
@@ -219,7 +240,10 @@ pub struct RuntimeUnitSpec {
     pub network: RuntimeNetworkSpec,
     pub resources: ResourceLimits,
     pub isolation: IsolationLevel,
+    /// Readiness policy used to decide whether a running Service can receive
+    /// traffic. Liveness and graceful stop are declared separately.
     pub health: Option<RuntimeHealthCheck>,
+    pub service_lifecycle: Option<RuntimeServiceLifecycle>,
     pub restart: RestartPolicy,
     pub outputs: Vec<RuntimeOutputSpec>,
     pub semantics_profile_digest: Option<String>,
@@ -227,7 +251,7 @@ pub struct RuntimeUnitSpec {
 }
 
 impl RuntimeUnitSpec {
-    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v3";
+    pub const SCHEMA: &'static str = "a3s.runtime.unit-spec.v4";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -286,8 +310,14 @@ impl RuntimeUnitSpec {
                 if self.resources.execution_timeout_ms.is_none() {
                     return Err("Task requires execution_timeout_ms".into());
                 }
-                if self.health.is_some() || matches!(self.restart, RestartPolicy::Always) {
-                    return Err("Task cannot use health checks or an always restart policy".into());
+                if self.health.is_some()
+                    || self.service_lifecycle.is_some()
+                    || matches!(self.restart, RestartPolicy::Always)
+                {
+                    return Err(
+                        "Task cannot use Service health, lifecycle, or an always restart policy"
+                            .into(),
+                    );
                 }
             }
             RuntimeUnitClass::Service => {
@@ -296,6 +326,14 @@ impl RuntimeUnitSpec {
                 }
                 if let Some(health) = &self.health {
                     health.validate(&self.network)?;
+                }
+                if let Some(lifecycle) = &self.service_lifecycle {
+                    if self.health.is_none() {
+                        return Err(
+                            "Service lifecycle requires a separate readiness health policy".into(),
+                        );
+                    }
+                    lifecycle.validate(&self.network)?;
                 }
             }
         }
@@ -355,6 +393,7 @@ mod tests {
             resources: resources(Some(60_000)),
             isolation: IsolationLevel::Container,
             health: None,
+            service_lifecycle: None,
             restart: RestartPolicy::OnFailure { max_retries: 1 },
             outputs: vec![RuntimeOutputSpec {
                 name: "image".into(),
@@ -431,6 +470,68 @@ mod tests {
             port: "missing".into(),
         };
         assert!(service.validate().is_err());
+    }
+
+    #[test]
+    fn service_lifecycle_is_service_only_readiness_bound_and_bounded() {
+        let mut service = service();
+        service.service_lifecycle = Some(RuntimeServiceLifecycle {
+            liveness: RuntimeHealthCheck {
+                probe: HealthProbe::Http {
+                    port: "http".into(),
+                    path: "/health/live".into(),
+                    expected_statuses: vec![200],
+                },
+                interval_ms: 5_000,
+                timeout_ms: 1_000,
+                start_period_ms: 10_000,
+                success_threshold: 1,
+                failure_threshold: 3,
+            },
+            shutdown_grace_seconds: 30,
+        });
+        service.validate().expect("Service lifecycle");
+
+        service.health = None;
+        assert!(service.validate().is_err());
+        service.health = Some(RuntimeHealthCheck {
+            probe: HealthProbe::Tcp {
+                port: "http".into(),
+            },
+            interval_ms: 5_000,
+            timeout_ms: 1_000,
+            start_period_ms: 0,
+            success_threshold: 1,
+            failure_threshold: 3,
+        });
+        service
+            .service_lifecycle
+            .as_mut()
+            .expect("lifecycle")
+            .shutdown_grace_seconds = 0;
+        assert!(service.validate().is_err());
+        service
+            .service_lifecycle
+            .as_mut()
+            .expect("lifecycle")
+            .shutdown_grace_seconds = 1;
+        service.validate().expect("minimum shutdown grace");
+        service
+            .service_lifecycle
+            .as_mut()
+            .expect("lifecycle")
+            .shutdown_grace_seconds = 3_600;
+        service.validate().expect("maximum shutdown grace");
+        service
+            .service_lifecycle
+            .as_mut()
+            .expect("lifecycle")
+            .shutdown_grace_seconds = 3_601;
+        assert!(service.validate().is_err());
+
+        let mut task = task();
+        task.service_lifecycle = service.service_lifecycle;
+        assert!(task.validate().is_err());
     }
 
     #[test]

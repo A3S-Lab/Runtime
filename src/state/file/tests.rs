@@ -109,6 +109,7 @@ fn spec() -> RuntimeUnitSpec {
         },
         isolation: IsolationLevel::Container,
         health: None,
+        service_lifecycle: None,
         restart: RestartPolicy::Always,
         outputs: Vec::new(),
         semantics_profile_digest: None,
@@ -159,6 +160,7 @@ fn provider_observation(
     observation.started_at_ms = Some(NOW);
     observation.finished_at_ms = state.is_terminal().then_some(observed_at_ms);
     observation.health = None;
+    observation.liveness = None;
     observation.outputs.clear();
     observation.failure = None;
     observation

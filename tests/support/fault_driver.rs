@@ -210,6 +210,7 @@ impl DeterministicFaultDriver {
             .is_terminal()
             .then_some(observation.observed_at_ms);
         observation.health = None;
+        observation.liveness = None;
         observation.outputs.clear();
         observation.failure = None;
         observation
@@ -330,6 +331,7 @@ impl RuntimeDriver for DeterministicFaultDriver {
                     resource.observation.observed_at_ms.saturating_add(1);
                 resource.observation.finished_at_ms = Some(resource.observation.observed_at_ms);
                 resource.observation.health = None;
+                resource.observation.liveness = None;
             }
             (resource.observation.clone(), changed)
         };

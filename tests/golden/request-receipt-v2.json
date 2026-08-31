@@ -13,7 +13,7 @@
     "schema": "a3s.runtime.exec-result.v1",
     "request_id": "golden-exec",
     "observation": {
-      "schema": "a3s.runtime.observation.v3",
+      "schema": "a3s.runtime.observation.v4",
       "unit_id": "golden-service",
       "generation": 3,
       "spec_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -29,6 +29,7 @@
         "checked_at_ms": 119000,
         "message": "ready"
       },
+      "liveness": null,
       "outputs": [],
       "usage": null,
       "evidence": null,

@@ -281,6 +281,7 @@ impl RuntimeClient for ManagedRuntimeClient {
                 unknown.observed_at_ms = unknown.observed_at_ms.max(self.clock.now_ms());
                 unknown.finished_at_ms = None;
                 unknown.health = None;
+                unknown.liveness = None;
                 unknown.outputs.clear();
                 unknown.clear_service_endpoints();
                 unknown.failure = None;

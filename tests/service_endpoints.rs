@@ -47,6 +47,7 @@ fn service_spec(protocol: TransportProtocol) -> RuntimeUnitSpec {
         },
         isolation: IsolationLevel::Sandbox,
         health: None,
+        service_lifecycle: None,
         restart: RestartPolicy::Always,
         outputs: Vec::new(),
         semantics_profile_digest: None,
@@ -68,6 +69,7 @@ fn running_observation(spec: &RuntimeUnitSpec) -> RuntimeObservation {
         started_at_ms: Some(10),
         finished_at_ms: None,
         health: None,
+        liveness: None,
         outputs: Vec::new(),
         usage: None,
         evidence: Some(RuntimeEvidence {

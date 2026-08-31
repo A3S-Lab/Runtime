@@ -430,6 +430,18 @@ fn extend_capability_case_ids(
                     .into(),
                 );
             }
+            if capabilities.supports_feature(RuntimeFeature::ServiceLifecycle) {
+                case_ids.extend(
+                    [
+                        "HEALTH-READINESS-LIVENESS-SEPARATION",
+                        "HEALTH-LIVENESS-TRANSITION",
+                        "HEALTH-GRACEFUL-STOP",
+                        "HEALTH-GRACE-DEADLINE-FORCE",
+                    ]
+                    .into_iter()
+                    .map(str::to_owned),
+                );
+            }
         }
         RuntimeConformanceProfile::Resources => {
             for control in &capabilities.resource_controls {
@@ -483,11 +495,17 @@ fn capability_claims(
             .iter()
             .map(|kind| format!("mount_kind:{kind:?}"))
             .collect(),
-        RuntimeConformanceProfile::Health => capabilities
-            .health_check_kinds
-            .iter()
-            .map(|kind| format!("health_check:{kind:?}"))
-            .collect(),
+        RuntimeConformanceProfile::Health => {
+            let mut claims = capabilities
+                .health_check_kinds
+                .iter()
+                .map(|kind| format!("health_check:{kind:?}"))
+                .collect::<BTreeSet<_>>();
+            if capabilities.supports_feature(RuntimeFeature::ServiceLifecycle) {
+                claims.insert("feature:ServiceLifecycle".into());
+            }
+            claims
+        }
         RuntimeConformanceProfile::Resources => capabilities
             .resource_controls
             .iter()

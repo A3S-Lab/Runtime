@@ -1,5 +1,5 @@
 {
-  "schema": "a3s.runtime.observation.v3",
+  "schema": "a3s.runtime.observation.v4",
   "unit_id": "golden-task",
   "generation": 7,
   "spec_digest": "sha256:2d45e69ff2dd43f933cc5b733eda674c30048578c27b5b5bfe1503dbc19d0723",
@@ -11,6 +11,7 @@
   "started_at_ms": 100000,
   "finished_at_ms": 120000,
   "health": null,
+  "liveness": null,
   "outputs": [
     {
       "name": "result",

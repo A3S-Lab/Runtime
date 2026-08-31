@@ -36,7 +36,7 @@ Therefore Runtime has exactly two unit classes:
 | Runtime class | Meaning | Convergence |
 | --- | --- | --- |
 | `Task` | One bounded execution with a terminal result | `succeeded` or a typed terminal failure |
-| `Service` | One long-running generation with optional endpoints and health | `running`, and healthy when required |
+| `Service` | One long-running generation with optional endpoints and lifecycle probes | `running`, ready and live when required |
 
 Agent, Workflow, Function, MCP, model, and Durable Cell are consumer semantics,
 not additional Runtime classes.
@@ -71,13 +71,14 @@ consumer declares the generic substrate it needs. It composes:
 - one required unit class;
 - required generic capabilities;
 - an optional requirement for an opaque semantics-profile digest;
-- optional healthy-Service readiness; and
+- optional healthy-Service readiness;
+- optional distinct liveness plus bounded graceful stop; and
 - optional exact Service endpoint evidence.
 
 `admit_spec` validates the immutable specification and advertised provider
 capabilities before dispatch. `accept_observation` validates exact identity,
-generation, specification digest, semantics evidence, health, and endpoint
-evidence before an observation can be used as a ready target.
+generation, specification digest, semantics evidence, readiness, liveness, and
+endpoint evidence before an observation can be used as a ready target.
 
 The abstraction is deliberately outside `src/contract`. Product profile
 fields remain in the consumer repository, while Runtime binds only their
@@ -108,7 +109,10 @@ Recovery, and every capability-triggered conformance profile it advertises.
 - One `(unit_id, generation, spec_digest)` identifies exactly one provider
   resource lineage.
 - A missing prior provider resource becomes `unknown`, never implicit success.
-- A new Service generation is publishable only from exact, healthy evidence.
+- A new Service generation is publishable only from exact, ready and live
+  evidence when those policies are configured.
+- Readiness controls traffic admission; liveness controls recovery; the
+  shutdown grace bounds provider termination. None may stand in for another.
 - Gateway receives only Cloud-admitted targets and never reads Runtime or Box
   state directly.
 - External FaaS transport ambiguity remains an indeterminate Connector outcome;
@@ -118,10 +122,11 @@ Recovery, and every capability-triggered conformance profile it advertises.
 
 ## 7. Delivery truth
 
-As of 2026-08-28, the generic consumer gate and component fixtures for a
+As of 2026-08-31, the generic consumer gate and component fixtures for a
 stateful Agent Service, Function Task, stateless Function/MCP Service, and
-Durable Cell Service are implemented in this repository. They prove contract
-composition only.
+Durable Cell Service are implemented in this repository. The Agent fixture also
+requires distinct liveness and bounded graceful stop. These tests prove
+contract composition only.
 
 Production availability still requires:
 

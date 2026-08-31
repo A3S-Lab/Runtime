@@ -115,7 +115,10 @@ pub struct RuntimeObservation {
     pub observed_at_ms: u64,
     pub started_at_ms: Option<u64>,
     pub finished_at_ms: Option<u64>,
+    /// Readiness observation corresponding to `RuntimeUnitSpec::health`.
     pub health: Option<RuntimeHealthObservation>,
+    /// Liveness observation corresponding to the optional Service lifecycle.
+    pub liveness: Option<RuntimeHealthObservation>,
     pub outputs: Vec<RuntimeOutputArtifact>,
     pub usage: Option<RuntimeUsage>,
     pub evidence: Option<RuntimeEvidence>,
@@ -124,7 +127,7 @@ pub struct RuntimeObservation {
 }
 
 impl RuntimeObservation {
-    pub const SCHEMA: &'static str = "a3s.runtime.observation.v3";
+    pub const SCHEMA: &'static str = "a3s.runtime.observation.v4";
 
     pub(crate) fn accepted(spec: &RuntimeUnitSpec, observed_at_ms: u64) -> Result<Self, String> {
         Ok(Self {
@@ -140,6 +143,7 @@ impl RuntimeObservation {
             started_at_ms: None,
             finished_at_ms: None,
             health: None,
+            liveness: None,
             outputs: Vec::new(),
             usage: None,
             evidence: None,
@@ -192,8 +196,10 @@ impl RuntimeObservation {
         if self.class == RuntimeUnitClass::Service && self.state == RuntimeUnitState::Succeeded {
             return Err("Service cannot enter succeeded state".into());
         }
-        if self.class == RuntimeUnitClass::Task && self.health.is_some() {
-            return Err("Task observation cannot contain Service health".into());
+        if self.class == RuntimeUnitClass::Task
+            && (self.health.is_some() || self.liveness.is_some())
+        {
+            return Err("Task observation cannot contain Service readiness or liveness".into());
         }
         if !(self.outputs.is_empty()
             || self.class == RuntimeUnitClass::Task && self.state == RuntimeUnitState::Succeeded)
@@ -210,6 +216,11 @@ impl RuntimeObservation {
         if let Some(health) = &self.health {
             if let Some(message) = &health.message {
                 super::validate_nonempty("health message", message, 4096)?;
+            }
+        }
+        if let Some(liveness) = &self.liveness {
+            if let Some(message) = &liveness.message {
+                super::validate_nonempty("liveness message", message, 4096)?;
             }
         }
         if let Some(evidence) = &self.evidence {
@@ -303,6 +314,22 @@ impl RuntimeObservation {
         } else if !self.outputs.is_empty() {
             return Err("only a succeeded Task may report outputs".into());
         }
+        let running_service =
+            self.class == RuntimeUnitClass::Service && self.state == RuntimeUnitState::Running;
+        if running_service {
+            if self.health.is_some() != spec.health.is_some() {
+                return Err(
+                    "Runtime readiness observation does not match the Service specification".into(),
+                );
+            }
+            if self.liveness.is_some() != spec.service_lifecycle.is_some() {
+                return Err(
+                    "Runtime liveness observation does not match the Service lifecycle".into(),
+                );
+            }
+        } else if self.health.is_some() || self.liveness.is_some() {
+            return Err("only a running Service may report readiness or liveness".into());
+        }
         let endpoints = self.service_endpoints()?;
         if self.class == RuntimeUnitClass::Service
             && self.state == RuntimeUnitState::Running
@@ -364,6 +391,11 @@ impl RuntimeObservation {
                 self.state == RuntimeUnitState::Running
                     && spec.health.as_ref().is_none_or(|_| {
                         self.health
+                            .as_ref()
+                            .is_some_and(|health| health.state == RuntimeHealthState::Healthy)
+                    })
+                    && spec.service_lifecycle.as_ref().is_none_or(|_| {
+                        self.liveness
                             .as_ref()
                             .is_some_and(|health| health.state == RuntimeHealthState::Healthy)
                     })

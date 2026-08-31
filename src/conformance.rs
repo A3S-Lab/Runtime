@@ -243,8 +243,12 @@ pub async fn verify_runtime_provider(
         .map_err(RuntimeError::Protocol)?;
     if !service.converges(&case.service_apply.spec) {
         return Err(RuntimeError::Protocol(format!(
-            "conformance Service did not reach running and healthy: state={:?}, provider_resource_id={:?}, health={:?}, failure={:?}",
-            service.state, service.provider_resource_id, service.health, service.failure
+            "conformance Service did not converge: state={:?}, provider_resource_id={:?}, readiness={:?}, liveness={:?}, failure={:?}",
+            service.state,
+            service.provider_resource_id,
+            service.health,
+            service.liveness,
+            service.failure
         )));
     }
     require_equal(
@@ -332,10 +336,11 @@ pub async fn verify_runtime_base(
         .map_err(RuntimeError::Protocol)?;
     if !generation.converges(&case.generation_apply.spec) {
         return Err(RuntimeError::Protocol(format!(
-            "Base generation fixture did not converge: state={:?}, provider_resource_id={:?}, health={:?}, failure={:?}",
+            "Base generation fixture did not converge: state={:?}, provider_resource_id={:?}, readiness={:?}, liveness={:?}, failure={:?}",
             generation.state,
             generation.provider_resource_id,
             generation.health,
+            generation.liveness,
             generation.failure
         )));
     }

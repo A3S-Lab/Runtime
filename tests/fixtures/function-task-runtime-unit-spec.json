@@ -1,5 +1,5 @@
 {
-  "schema": "a3s.runtime.unit-spec.v3",
+  "schema": "a3s.runtime.unit-spec.v4",
   "unit_id": "execution:function-invocation:1",
   "generation": 1,
   "class": "task",
@@ -39,6 +39,7 @@
   },
   "isolation": "sandbox",
   "health": null,
+  "service_lifecycle": null,
   "restart": {
     "kind": "never"
   },

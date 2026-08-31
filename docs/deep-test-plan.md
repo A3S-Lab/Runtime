@@ -32,7 +32,7 @@ the Rust `a3s-runtime` protocol.
 
 ## 3. Evidence-Based Baseline
 
-Source inspection on 2026-08-28 established this baseline. It must be refreshed
+Source inspection on 2026-08-31 established this baseline. It must be refreshed
 at the start of an implementation or release campaign.
 
 | Area | Current evidence | Gap |
@@ -68,7 +68,10 @@ These invariants are the basis of every test oracle.
 ### 4.2 Lifecycle and recovery
 
 - Task convergence means `succeeded`; Service convergence means `running` and,
-  when configured, `healthy`.
+  when configured, both ready and live.
+- Readiness controls traffic admission, liveness controls recovery, and the
+  shutdown grace bounds termination; evidence for one never substitutes for
+  another.
 - Terminal observations are immutable.
 - Explicit removal creates a durable generation-aware tombstone.
 - A missing previously observed provider resource becomes `unknown`, not
@@ -202,7 +205,7 @@ schema review; snapshot acceptance is never automatic.
 | `SPEC-MOUNT-*` | Artifact, volume, and tmpfs sources; read-only behavior; zero/overflow size; duplicate names and targets; cross-kind collisions |
 | `SPEC-SECRET-*` | Opaque references, environment/file/registry-credential targets, file modes, duplicate names/targets, collision with process environment and mounts, and non-disclosure |
 | `SPEC-NET-*` | None/outbound/service modes, TCP/UDP, zero port, duplicate name/socket, 64-port boundary, and service-only publication |
-| `SPEC-HEALTH-*` | HTTP/TCP/command probes, named-port binding, status ranges, path validation, timing relationships, start period, and thresholds |
+| `SPEC-HEALTH-*` | HTTP/TCP/command readiness and liveness probes, named-port binding, status ranges, path validation, timing relationships, start period, thresholds, Service-only lifecycle, and 1-3600 second shutdown grace |
 | `SPEC-RESOURCE-*` | CPU, memory, PIDs, optional ephemeral storage, Task timeout, zero values, numeric maxima, and provider conversion overflow |
 | `SPEC-ISOLATION-*` | Process, container, sandbox, and confidential requirements; capability rejection; provider mapping and evidence |
 | `SPEC-RESTART-*` | Never, always, and on-failure policies; retry boundaries; Task/Service restrictions; provider enforcement |
@@ -231,7 +234,7 @@ Capability claims are tested twice:
 
 Generate and verify the full state-transition matrix for Task and Service.
 Cover provider identity, build identity, monotonic observation time, start and
-finish ordering, terminal timestamps, health, outputs, usage, evidence,
+finish ordering, terminal timestamps, readiness, liveness, outputs, usage, evidence,
 attestation, failure details, and convergence.
 
 The matrix must include:
@@ -242,7 +245,8 @@ The matrix must include:
 - all transitions to and from `unknown` allowed by the final contract;
 - terminal equality replay and every attempted terminal mutation;
 - provider identity substitution before and after confirmed loss;
-- a Service attempting `succeeded` and a Task carrying health;
+- a Service attempting `succeeded`, a Task carrying readiness/liveness, and a
+  non-running Service carrying probe evidence;
 - duplicate output artifacts and evidence bound to another specification.
 
 ### 7.5 Managed operations
@@ -327,7 +331,7 @@ fixtures and destructive cleanup.
 | Recovery | Create-before-ack crash, client restart, provider restart, external deletion to `unknown`, one same-generation replacement, duplicate-resource detection |
 | Networking | Every advertised network mode and protocol, loopback publication, outbound denial/allowance, port collision behavior |
 | Mounts | Every advertised mount kind, read-only enforcement, persistence, isolation, cleanup |
-| Health | Every advertised probe kind, threshold transitions, timeout, start period, unhealthy exit |
+| Health | Every advertised probe kind, threshold transitions, timeout, start period, unhealthy exit; `ServiceLifecycle` additionally requires readiness/liveness separation, liveness transition, graceful stop within the declared grace, and force stop at its deadline |
 | Resources | Every advertised control verified by provider configuration and workload behavior |
 | Logs | Stream filtering, total order, cursor resume, same-timestamp records, limit, rotation gap, retention, large records |
 | Exec | Bounded unary state policy, timeout, exit code, output bounds, truncation, identity and generation binding |
@@ -349,7 +353,7 @@ This table describes source claims, not release certification.
 | Isolation | `container` | `sandbox`; optional `confidential` when SEV-SNP is configured |
 | Network | none, outbound, service | none and service; outbound is not advertised |
 | Mounts | named volume, tmpfs | volume and tmpfs; artifact when configured |
-| Health | HTTP, TCP, command | HTTP, TCP, command |
+| Health | HTTP, TCP, command; no lifecycle claim until separately certified | HTTP, TCP, command; `ServiceLifecycle` remains unadvertised until exact lifecycle cases pass |
 | Resources | CPU, memory, PIDs, Task timeout | CPU, memory, PIDs, Task timeout |
 | Features | durable identity, stop, remove, logs | durable identity, stop, remove, TCP Service, logs, exec; Secrets, outputs, and attestation when configured |
 | Not advertised | exec, usage, attestation, secrets, artifact mounts, ephemeral quota | usage, UDP Service, outbound, and ephemeral quota; optional capabilities must never be inferred |
@@ -366,7 +370,9 @@ passing result.
 - Validate all managed labels and reject label tampering, wrong node,
   namespace collision, and multiple matching containers.
 - Prove Task exit 0, nonzero exit, signal exit, timeout, and daemon error.
-- Prove HTTP, TCP, and command health success and failure thresholds.
+- Prove HTTP, TCP, and command readiness/liveness success and failure
+  thresholds. If `ServiceLifecycle` is advertised, prove all four lifecycle
+  case IDs and the declared grace deadline against the real provider clock.
 - Verify CPU, memory/swap, PIDs, network mode, loopback port binding, restart
   policy, volume mode, and hardened tmpfs through Docker inspect and behavior.
 - Exercise stdout/stderr ordering, nanosecond timestamp ties, cursor replay,
@@ -406,7 +412,7 @@ admission/readiness abstraction:
 
 | Consumer profile | Required projection | Component oracle | Real-provider oracle |
 | --- | --- | --- | --- |
-| Stateful Agent | `Service` with exact semantics, health, TCP endpoint, Secrets, logs, exec, and a persistent mount when required | No Agent class or wire field; missing profile/capability/evidence fails closed | Box process/node loss preserves one fenced binding and no stale workspace writer |
+| Stateful Agent | `Service` with exact semantics, readiness, liveness, bounded graceful stop, TCP endpoint, Secrets, logs, exec, and a persistent mount when required | No Agent class or wire field; missing profile/capability/evidence fails closed | Box proves lifecycle separation/deadline cases; process/node loss preserves one fenced binding and no stale workspace writer |
 | Finite Function | `Task` with exact semantics, timeout, isolation, output and network policy | No Function class; terminal outputs remain exact and bounded | Box timeout/cancel/recovery/cleanup plus egress behavior for every advertised mode |
 | Stateless Function | `Service` with exact semantics, health, and TCP endpoint | Same requirements shape as sessionless MCP | Gateway route, scale policy, replacement, load, and cleanup pass at exact revisions |
 | Workflow | No Unit for orchestration; owner-created child profiles only | Flow replay cannot create a second child intent | Chained/parallel Agent and Function nodes recover without duplicate Units or outcomes |

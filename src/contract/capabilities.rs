@@ -30,6 +30,7 @@ pub enum RuntimeFeature {
     IdentityAttachment,
     SecretReferences,
     OutputArtifacts,
+    ServiceLifecycle,
 }
 
 /// Structured, provider-reported capabilities. Product-specific support
@@ -51,7 +52,7 @@ pub struct RuntimeCapabilities {
 }
 
 impl RuntimeCapabilities {
-    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v5";
+    pub const SCHEMA: &'static str = "a3s.runtime.capabilities.v6";
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -83,6 +84,15 @@ impl RuntimeCapabilities {
             return Err(
                 "Runtime Service networking and service protocol capabilities must be advertised together"
                     .into(),
+            );
+        }
+        if self.supports_feature(RuntimeFeature::ServiceLifecycle)
+            && (!self.unit_classes.contains(&RuntimeUnitClass::Service)
+                || self.health_check_kinds.is_empty()
+                || !self.supports_feature(RuntimeFeature::Stop))
+        {
+            return Err(
+                "Runtime Service lifecycle requires Service, health, and stop capabilities".into(),
             );
         }
         for media_type in &self.artifact_media_types {
@@ -134,6 +144,12 @@ impl RuntimeCapabilities {
                 missing.push(format!("health_check:{kind:?}"));
             }
         }
+        if let Some(lifecycle) = &spec.service_lifecycle {
+            let kind = lifecycle.liveness.probe.kind();
+            if !self.health_check_kinds.contains(&kind) {
+                missing.push(format!("health_check:{kind:?}"));
+            }
+        }
         for required in [
             ResourceControl::Cpu,
             ResourceControl::Memory,
@@ -175,6 +191,11 @@ impl RuntimeCapabilities {
             && !self.supports_feature(RuntimeFeature::IdentityAttachment)
         {
             missing.push("feature:IdentityAttachment".into());
+        }
+        if spec.service_lifecycle.is_some()
+            && !self.supports_feature(RuntimeFeature::ServiceLifecycle)
+        {
+            missing.push("feature:ServiceLifecycle".into());
         }
         missing.sort();
         missing.dedup();

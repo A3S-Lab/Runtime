@@ -2,7 +2,7 @@
 
 ## 1. Scope and authority
 
-**Status as of 2026-08-30.**
+**Status as of 2026-08-31.**
 
 This roadmap describes work owned by the A3S Runtime repository. The
 [implementation plan](docs/implementation-plan.md) owns task order, and the
@@ -24,8 +24,8 @@ Runtime owns:
 - immutable Unit identity, generation, specification digest, and request
   replay;
 - apply, inspect, stop, remove, logs, and bounded unary exec;
-- capability admission and provider-neutral health, resource, network, mount,
-  output, and evidence contracts;
+- capability admission and provider-neutral readiness, liveness, graceful
+  stop, resource, network, mount, output, and evidence contracts;
 - typed, generation-bound Service endpoint observations;
 - provider recovery, fencing, conformance, and cleanup evidence; and
 - opaque binding of a product semantics profile through its immutable digest;
@@ -63,8 +63,9 @@ Those boundaries produce this ownership map:
 | General Task and Service contract | Implemented foundation; the complete `R00`-`R22` release audit remains authoritative | Preserve one generic lifecycle contract |
 | Typed TCP Service endpoints | Implemented by ADR 0004 and bound to provider build, specification digest, and generation | Reuse for hosted MCP; do not add an MCP endpoint registry |
 | Product semantics binding | Opaque `semantics_profile_digest` is part of the existing contract | Cloud owns every product profile; Runtime verifies only the binding |
-| Workload identity attachment | Component complete (2026-08-30): unit-spec/observation v3 and capabilities v5 expose one opaque attachment digest, one typed attestation projection, and one composed consumer requirement | Cloud owns policy, Fleet/Claim composition, freshness, and issuance; Box must certify exact provider evidence |
-| Unified consumer requirements | Implemented component foundation: class, generic feature, semantics evidence, health, and endpoint requirements compose through one API | Cloud consumers must adopt this API instead of duplicating generic admission checks |
+| Workload identity attachment | Component complete (2026-08-30): current unit-spec/observation v4 and capabilities v6 retain one opaque attachment digest, one typed attestation projection, and one composed consumer requirement | Cloud owns policy, Fleet/Claim composition, freshness, and issuance; Box must certify exact provider evidence |
+| Service lifecycle separation | Component complete (2026-08-31): readiness, liveness, bounded graceful stop, capability dependencies, observation binding, and capability-triggered case IDs are explicit | Box must implement and certify all four lifecycle cases before advertising `ServiceLifecycle`; Cloud must require it for Code Agent releases |
+| Unified consumer requirements | Implemented component foundation: class, generic feature, semantics evidence, readiness, liveness, and endpoint requirements compose through one API | Cloud consumers must adopt this API instead of duplicating generic admission checks |
 | AaaS/FaaS/MCP/Durable Cell fixtures | Component fixtures pass for Agent Service, Function Task, stateless Function/MCP Service, and Durable Cell Service without new Runtime classes | Fixtures prove composition, not product availability |
 | A3S Box provider certification | The Box repository implements `BoxRuntimeDriver` and capability-triggered conformance fixtures; exact-revision re-certification and profile gaps such as `Outbound` remain open | No Cloud product may bypass Box certification or infer an unadvertised capability |
 | Hosted MCP Service substrate | Consumer-profile foundation implemented: ADR boundary, canonical Runtime Unit fixture, semantics-profile digest equality, typed endpoint/generation acceptance, and stale evidence rejection pass focused tests. Real Box/Linux workload and recovery certification remain open | Keep MCP a black-box Service consumer and proceed to `RMCP-03`; do not claim `MCP0.2` before real provider evidence |
@@ -76,7 +77,7 @@ Runtime supports Cloud product profiles through composition, not inheritance:
 
 | Cloud surface | Generic projection | Runtime delivery gate |
 | --- | --- | --- |
-| AaaS | Stateful Agent `Service`; bounded batch Agent may be `Task` | Exact semantics/readiness evidence plus Box recovery and workspace-fence proof |
+| AaaS | Stateful Agent `Service`; bounded batch Agent may be `Task` | Exact semantics/readiness/liveness evidence, graceful stop, Box recovery, and workspace-fence proof |
 | WaaS | No Workflow unit; Agent/Function/Execution nodes use their owner projection | Flow replay must not duplicate a child Runtime intent |
 | FaaS | Finite `Task`, low-latency stateless `Service`, or no local unit for external FaaS | Task/Service Box profiles plus Cloud Connector evidence for external calls |
 | Durable Cell | One application replica as `Service`; individual named Cell is not a unit | Runtime evidence plus provider state-lineage and writer-fence evidence |
@@ -89,6 +90,8 @@ Runtime supports Cloud product profiles through composition, not inheritance:
 | `RCON-03` | In progress | Pin Cloud to the exact Runtime revision and replace duplicate generic consumer checks | Cloud architecture and consumer tests prove one shared admission/readiness mechanism |
 | `RWI-01` | Component complete (2026-08-30) | Bind one opaque identity attachment to the exact Runtime Unit generation and provider attestation | Golden schemas, fail-closed consumer tests, and ADR 0007 pass without product fields entering Runtime |
 | `RWI-02` | In progress | Re-certify Box and pin Cloud to the exact attachment-aware Runtime revision | Box repeats the digest in generation-bound evidence; Cloud composes only the typed Runtime binding with owner ports |
+| `RSL-01` | Component complete (2026-08-31) | Separate Service readiness, liveness, and bounded graceful stop in the provider-neutral contract | v4/v6 golden schemas and fail-closed capability, specification, observation, consumer, and conformance tests pass |
+| `RSL-02` | In progress | Implement the lifecycle contract in Box and consume it from Cloud Agent release projection | Exact Runtime/Box/Cloud revisions pass separation, transition, graceful-stop, force-stop, and cleanup gates |
 | `RBOX-01` | Driver and conformance harness implemented; exact-revision evidence pending | Certify the A3S Box Runtime driver and close each required capability gap | Base, Recovery, and every advertised profile pass with baseline inventory restored |
 | `RBOX-02` | Planned | Run exact-revision Gateway/Cloud/Runtime/Box compatibility gates for each service profile | Requests enter through Gateway, targets bind exact observations, failures recover, cleanup is complete |
 

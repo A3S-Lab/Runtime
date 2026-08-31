@@ -48,16 +48,16 @@ Every unit generation is bound to one immutable identity:
   `GenerationConflict`.
 - **Unsupported work stops before dispatch.** Specifications are matched
   against structured provider capabilities before state reservation.
-- **Desired and observed state stay separate.** Provider identity, health,
-  usage, outputs, evidence, endpoints, attestation, and failure details live in
-  `RuntimeObservation`.
+- **Desired and observed state stay separate.** Provider identity, readiness,
+  liveness, usage, outputs, evidence, endpoints, attestation, and failure
+  details live in `RuntimeObservation`.
 - **Provider loss is explicit.** A previously observed resource that disappears
   becomes `unknown`; Runtime does not silently turn loss into success.
 
 | Unit class | Converges when | Typical work |
 | --- | --- | --- |
 | `Task` | `succeeded` | Builds, finite Functions, migrations, evaluations, backups |
-| `Service` | `running`, and healthy when configured | Stateful Agents, stateless Functions/MCP, Durable Cell applications |
+| `Service` | `running`, ready and live when configured | Stateful Agents, stateless Functions/MCP, Durable Cell applications |
 
 Workflow orchestration is not a third unit class. A3S Flow owns the durable
 Workflow state machine; only its executable Agent or Function children project
@@ -92,8 +92,8 @@ Client -> A3S Gateway -> A3S Cloud -> A3S Runtime -> A3S Box
 
 `RuntimeConsumerRequirements` is the one non-wire admission/readiness
 abstraction for consumer profiles. It composes a generic unit class, required
-features, opaque semantics evidence, Service health, and exact endpoints while
-leaving all product fields in the caller:
+features, opaque semantics evidence, Service readiness/liveness, and exact
+endpoints while leaving all product fields in the caller:
 
 ```rust,ignore
 use a3s_runtime::contract::{RuntimeFeature, RuntimeUnitClass};
@@ -102,6 +102,7 @@ use a3s_runtime::RuntimeConsumerRequirements;
 let requirements = RuntimeConsumerRequirements::new(RuntimeUnitClass::Service)
     .require_semantics_profile()
     .require_health()
+    .require_service_lifecycle()
     .require_service_endpoints()
     .require_feature(RuntimeFeature::ServiceTcp);
 
@@ -167,10 +168,10 @@ Choose the entry point that matches your role:
   equivalent fenced per-unit lease.
 
 > [!NOTE]
-> `a3s-runtime` 0.4.0 uses capabilities v5, unit-spec/observation v3, typed
-> Service endpoints, and one opaque identity-attachment-to-attestation binding.
-> The unified consumer requirements API remains subject to the repository's
-> release and exact Box certification gates.
+> `a3s-runtime` 0.5.0 uses capabilities v6 and unit-spec/observation v4. It
+> separates Service readiness from liveness, carries a bounded graceful-stop
+> policy, and retains typed endpoints plus opaque identity-attestation binding.
+> Production claims still require exact A3S Box certification.
 
 ## Runtime specification
 
@@ -183,7 +184,8 @@ Choose the entry point that matches your role:
   credentials;
 - network mode, named ports, and TCP/UDP transport;
 - CPU, memory, process, optional ephemeral-storage, and execution limits;
-- isolation level, health checks, restart policy, and Task outputs;
+- isolation level, readiness, optional liveness and graceful-stop policy,
+  restart policy, and Task outputs;
 - an optional digest binding caller-owned execution semantics; and
 - an optional opaque identity-attachment digest, repeated by exact provider
   evidence without importing product policy.
@@ -206,7 +208,7 @@ profiles do not enter the core protocol.
 
 Terminal observations (`stopped`, `succeeded`, and `failed`) are immutable.
 Tasks may produce exact, digest-bound output artifacts. Services may publish
-health and typed node-local endpoints while running.
+distinct readiness, liveness, and typed node-local endpoints while running.
 
 ## Durable replay
 
@@ -242,13 +244,15 @@ predicates:
 - isolation levels and network modes;
 - mount and health-check kinds;
 - CPU, memory, PID, ephemeral-storage, and execution-time controls;
-- optional lifecycle, logs, exec, usage, attestation, identity attachment,
-  secrets, and output features.
+- optional Service lifecycle, logs, exec, usage, attestation, identity
+  attachment, secrets, and output features.
 
-Capabilities v5 advertises `ServiceTcp` and `ServiceUdp` independently and
-requires `IdentityAttachment` before an attached specification is dispatched.
+Capabilities v6 advertises `ServiceTcp` and `ServiceUdp` independently,
+requires `IdentityAttachment` before an attached specification is dispatched,
+and makes `ServiceLifecycle` an atomic liveness plus graceful-stop guarantee.
 `NetworkMode::Service` specifications are rejected before reservation when a
-declared port uses an unadvertised transport.
+declared port uses an unadvertised transport. Readiness and liveness are
+rejected when their probe kind is not advertised.
 
 A running Service publishes exactly one canonical loopback
 `RuntimeServiceEndpoint` for every declared port. Endpoint claims are bound to
@@ -292,6 +296,10 @@ Exec, Security, Outputs, and Evidence activate from advertised capabilities.
 The suite requires exact case IDs and capability evidence, requests cleanup
 even after failure, and rejects any provider inventory delta.
 
+Advertising `ServiceLifecycle` additionally activates readiness/liveness
+separation, liveness transition, graceful-stop, and grace-deadline force-stop
+cases. A provider must not advertise it from configuration intent alone.
+
 The lower-level `verify_runtime_provider` helper covers the successful Task and
 Service lifecycle, but it is not production certification by itself.
 
@@ -321,6 +329,7 @@ reasoning:
 - [ADR 0005 — Host modern stateless MCP as a Service profile](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
 - [ADR 0006 — Unify AI service consumers on Task, Service, and A3S Box](docs/adr/0006-unify-ai-service-consumers-on-task-service-and-box.md)
 - [ADR 0007 — Bind opaque identity attachment to provider attestation](docs/adr/0007-bind-opaque-identity-attachment-to-provider-attestation.md)
+- [ADR 0008 — Separate Service readiness, liveness, and graceful stop](docs/adr/0008-separate-service-readiness-liveness-and-graceful-stop.md)
 - [Unified AI Service Runtime](docs/unified-ai-service-runtime.md)
 - [Roadmap](ROADMAP.md)
 - [Implementation plan](docs/implementation-plan.md)

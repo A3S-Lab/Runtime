@@ -3,6 +3,12 @@
 </p>
 
 <p align="center">
+  <strong>Language / 语言:</strong>
+  <a href="README.md">English</a> ·
+  <a href="README.zh-CN.md">中文</a>
+</p>
+
+<p align="center">
   <a href="https://crates.io/crates/a3s-runtime"><img alt="Crates.io release" src="https://img.shields.io/crates/v/a3s-runtime?style=flat-square&color=f97316"></a>
   <a href="https://docs.rs/a3s-runtime/latest/a3s_runtime/"><img alt="docs.rs API documentation" src="https://img.shields.io/docsrs/a3s-runtime?style=flat-square"></a>
   <a href="https://github.com/A3S-Lab/Runtime/actions/workflows/ci.yml"><img alt="Continuous integration status" src="https://img.shields.io/github/actions/workflow/status/A3S-Lab/Runtime/ci.yml?branch=main&style=flat-square&label=CI"></a>

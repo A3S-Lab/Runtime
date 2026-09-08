@@ -2,6 +2,7 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="A3S Runtime: one durable lifecycle for provider-neutral Tasks and Services">
 </p>
 
+
 <p align="center">
   <strong>Language / 语言:</strong>
   <a href="README.md">English</a> ·
@@ -17,29 +18,29 @@
 </p>
 
 <p align="center">
-  <a href="#the-contract-at-a-glance">合约</a> ·
-  <a href="#architecture">架构</a> ·
+  <a href="#the-contract-at-a-glance">合同</a> ·
+  <a href="#architecture">建筑</a> ·
   <a href="#use-the-crate">使用该 crate</a> ·
-  <a href="#durable-replay">持久性</a> ·
+  <a href="#durable-replay">耐用</a> ·
   <a href="#provider-conformance">一致性</a> ·
   <a href="#deliberate-boundaries">边界</a>
 </p>
 
-**A3S 运行时** 是针对有限任务和提供者中立的执行合约
+**A3S Runtime** 是有限任务的提供者中立执行合约
 长期运行的服务。它为调用者提供了跨本地的生命周期 API，
 容器、沙箱和远程提供程序，同时保留提供程序机制
 在类型化的驱动程序边界后面。
 
 它是 A3S Cloud AaaS 下的单一执行底层，可执行 WaaS
 节点、FaaS、托管 MCP 和 Durable Cell 应用程序服务。支持的
-生产链使用A3S Box作为流程/沙箱提供者；公共交通
-通过 A3S 网关进入，而不是直接通过运行时端点进入。
+生产链使用A3S Box作为流程/沙箱提供者；公网流量
+通过 A3S Gateway 进入，而不是直接通过运行时端点进入。
 
 运行时拥有验证、不可变代、能力准入、持久
 请求身份，并观察收敛。调度、路由、部署
-工作流程、产品政策和提供商选择由呼叫者保留。
+工作流程、产品政策和提供商选择由调用方保留。
 
-## 契约一览
+## 合同一览
 
 每个单元生成都绑定到一个不可变的身份：
 
@@ -58,14 +59,14 @@
   活跃度、使用情况、输出、证据、端点、证明和失败
   详细信息请参见`RuntimeObservation`。
 - **提供者损失是明确的。** 先前观察到的资源消失了
-  变成`unknown`；运行时不会默默地转败为胜。
+  变为`unknown`；运行时不会默默地转败为胜。
 
 |单位类别|收敛于 |典型作品|
 | ---| ---| ---|
 | `Task` | `succeeded` |构建、有限功能、迁移、评估、备份 |
-| `Service` | `running`，配置完毕即可使用 |有状态代理、无状态功能/MCP、持久单元应用程序 |
+| `Service` | `running`，配置完毕即可上线 |有状态代理、无状态功能/MCP、持久单元应用程序 |
 
-工作流编排不是第三个单元类别。 A3S Flow 拥有耐用的
+工作流编排不是第三个单元类别。 A3S Flow拥有经久耐用
 工作流状态机；仅其可执行的 Agent 或 Function 子项目
 到运行时任务或服务。
 
@@ -75,7 +76,7 @@
   <img src="./assets/readme/architecture.svg" width="100%" alt="A3S Runtime architecture from caller policy through ManagedRuntimeClient and RuntimeDriver to an external provider">
 </p>
 
-`ManagedRuntimeClient`是共享生命周期实现。它由三部分组成
+`ManagedRuntimeClient` 是共享生命周期实现。它由三部分组成
 可更换端口：
 
 - [`RuntimeStateStore`](https://docs.rs/a3s-runtime/latest/a3s_runtime/trait.RuntimeStateStore.html)
@@ -87,7 +88,7 @@
 
 驱动程序从不决定生成或请求冲突策略。注册表
 从不选择默认提供商或默默地退回：调用者选择一个
-显式 `ProviderId` 并通过 `RuntimeClientRegistry` 连接。
+显式`ProviderId`并通过`RuntimeClientRegistry`连接。
 
 ### 云、运行时、Box 和网关
 
@@ -96,7 +97,7 @@ Client -> A3S Gateway -> A3S Cloud -> A3S Runtime -> A3S Box
           public path    semantics    lifecycle     execution
 ```
 
-`RuntimeConsumerRequirements` 是一种无线准入/准备状态
+`RuntimeConsumerRequirements` 是一个无线准入/准备状态
 消费者档案的抽象。它组成了一个通用单元类，需要
 特征、不透明语义证据、服务就绪性/活跃性和精确性
 端点，同时将所有产品字段保留在调用者中：
@@ -116,7 +117,7 @@ requirements.admit_spec(&spec, &capabilities)?;
 requirements.accept_observation(&spec, &observation)?;
 ```
 
-请参见【统一AI服务运行时](docs/unified-ai-service-runtime.md)】
+参见[Unified AI Service Runtime](docs/unified-ai-service-runtime.md)
 代理、工作流、功能、MCP 和耐用单元投影矩阵。
 
 ### 一次申请，端到端
@@ -167,17 +168,17 @@ let observation = client.apply(&request).await?;
   [`RuntimeClient`](https://docs.rs/a3s-runtime/latest/a3s_runtime/trait.RuntimeClient.html)
   直接获取生命周期或从`RuntimeClientRegistry`获取生命周期。
 - **提供者作者：** 实现`RuntimeDriver`，通过
-  `RuntimeProviderFactory`，并制作`apply`、`stop`、`remove`，并进行广告宣传
+  `RuntimeProviderFactory`，制作`apply`，`stop`，`remove`，并做广告
   `exec` 行为在不明确的结果后可以安全地重试。
-- **平台集成商：**本地文件系统时替换`RuntimeStateStore`
+- **平台集成商：** 当本地文件系统时替换 `RuntimeStateStore`
   持久性不足；分布式实现必须提供
   等效的围栏每单位租赁。
 
-> [!注意]
+> [!NOTE]
 > `a3s-runtime` 0.5.0 使用功能 v6 和单位规格/观察 v4。它
 > 将服务就绪性与活跃性分开，带有有限的优雅停止
 > 策略，并保留类型化端点以及不透明的身份证明绑定。
-> 生产声明仍需要精确的 A3S Box 认证。
+> 生产声明仍需要准确的 A3S Box 认证。
 
 ## 运行时规范
 
@@ -202,7 +203,7 @@ let observation = client.apply(&request).await?;
 
 ### 生命周期操作
 
-|运营|契约|
+|运营|合同|
 | --- | --- |
 | `capabilities` |返回并验证结构化提供商支持 |
 | `apply` |创建、重新附加或聚合一个不可变的一代 |
@@ -218,7 +219,7 @@ let observation = client.apply(&request).await?;
 
 ## 持久重播
 
-随附的 `FileRuntimeStateStore` 保留一项活动单元记录和一项
+包含的`FileRuntimeStateStore`保留了一个活动单元记录和一个
 每个请求的收据：
 
 ```text
@@ -261,7 +262,7 @@ Capability v6 独立通告 `ServiceTcp` 和 `ServiceUdp`，
 当他们的探针类型没有被公布时被拒绝。
 
 正在运行的服务恰好发布一个规范环回
-`RuntimeServiceEndpoint` 对于每个声明的端口。端点声明必须
+`RuntimeServiceEndpoint` 适用于每个申报的港口。端点声明必须
 观察的提供者构建和规范摘要。提供商拥有
 侦听器创建、生成屏蔽、恢复和清理；消费者可能
 根据键入的观察结果编译路由或健康策略，但不得发明
@@ -286,7 +287,7 @@ Capability v6 独立通告 `ServiceTcp` 和 `ServiceUdp`，
 
 ## 提供商一致性
 
-生产提供商实现`RuntimeConformanceFixture`并运行共享
+生产提供商实施`RuntimeConformanceFixture`并运行共享
 针对真实的一次性基础设施的套件：
 
 ```rust,ignore
@@ -309,7 +310,7 @@ assert_eq!(report.inventory_before, report.inventory_after);
 较低级别的`verify_runtime_provider`帮助器涵盖了成功的任务和
 服务生命周期，但它本身并不是生产认证。
 
-A3S Box 包含生产 `RuntimeDriver` 和能力触发
+A3S Box 包含生产`RuntimeDriver` 和能力触发
 固定装置。云产品只有在确切的运行时和框之后才能请求支持
 修订通过每个广告配置文件并恢复预测试库存；
 无法推断出站网络等未公开的功能。
@@ -328,18 +329,18 @@ A3S Runtime 故意不拥有：
 可测试的。查看完整的设计决策和交付计划
 推理：
 
-- [ADR 0001 — 一般任务和服务契约](docs/adr/0001-general-runtime-contract.md)
-- [ADR 0002 — 协议和操作语义](docs/adr/0002-complete-protocol-and-operation-semantics.md)
-- [ADR 0003 — 交互式流执行位于 v0.2](docs/adr/0003-keep-interactive-streaming-exec-outside-v0.2-core.md) 之外
-- [ADR 0004 — 类型化服务端点和协议功能](docs/adr/0004-type-service-endpoints-and-protocol-capabilities.md)
-- [ADR 0005 — 托管现代无状态 MCP 即服务配置文件](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
-- [ADR 0006 — 统一任务、服务和 A3S Box 上的 AI 服务消费者](docs/adr/0006-unify-ai-service-consumers-on-task-service-and-box.md)
-- [ADR 0007 — 将不透明身份附件绑定到提供商证明](docs/adr/0007-bind-opaque-identity-attachment-to-provider-attestation.md)
-- [ADR 0008 — 单独的服务准备情况、活跃度和优雅停止](docs/adr/0008-separate-service-readiness-liveness-and-graceful-stop.md)
-- [统一AI服务运行时](docs/unified-ai-service-runtime.md)
-- [路线图](ROADMAP.md)
-- 【实施计划](docs/implementation-plan.md)
-- 【深度测试计划](docs/deep-test-plan.md)
+- [ADR 0001 — General Task and Service contract](docs/adr/0001-general-runtime-contract.md)
+- [ADR 0002 — Protocol and operation semantics](docs/adr/0002-complete-protocol-and-operation-semantics.md)
+- [ADR 0003 — Interactive streaming exec stays outside v0.2](docs/adr/0003-keep-interactive-streaming-exec-outside-v0.2-core.md)
+- [ADR 0004 — Typed Service endpoints and protocol capabilities](docs/adr/0004-type-service-endpoints-and-protocol-capabilities.md)
+- [ADR 0005 — Host modern stateless MCP as a Service profile](docs/adr/0005-host-modern-stateless-mcp-as-a-service-profile.md)
+- [ADR 0006 — Unify AI service consumers on Task, Service, and A3S Box](docs/adr/0006-unify-ai-service-consumers-on-task-service-and-box.md)
+- [ADR 0007 — Bind opaque identity attachment to provider attestation](docs/adr/0007-bind-opaque-identity-attachment-to-provider-attestation.md)
+- [ADR 0008 — Separate Service readiness, liveness, and graceful stop](docs/adr/0008-separate-service-readiness-liveness-and-graceful-stop.md)
+- [Unified AI Service Runtime](docs/unified-ai-service-runtime.md)
+- [Roadmap](ROADMAP.md)
+- [Implementation plan](docs/implementation-plan.md)
+- [Deep test plan](docs/deep-test-plan.md)
 
 ## 发展
 
@@ -358,6 +359,6 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 强化、类型化服务端点、注册表行为和提供程序
 一致性。
 
-## 许可证
+## 执照
 
-[麻省理工学院](LICENSE) © A3S 实验室
+[MIT](LICENSE) © A3S 实验室

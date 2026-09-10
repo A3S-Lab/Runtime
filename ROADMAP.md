@@ -2,7 +2,7 @@
 
 ## 1. Scope and authority
 
-**Status as of 2026-08-31.**
+**Status as of 2026-09-10.**
 
 This roadmap describes work owned by the A3S Runtime repository. The
 [implementation plan](docs/implementation-plan.md) owns task order, and the
@@ -10,6 +10,18 @@ This roadmap describes work owned by the A3S Runtime repository. The
 ordering and the public state of AaaS, WaaS, FaaS, Durable Cells, and `MCP0`
 are owned by the
 [A3S Cloud product roadmap](https://github.com/A3S-Lab/Cloud/blob/main/ROADMAP.md).
+Cloud execution waves and dual-track `I0` live in the
+[architecture optimization roadmap](https://github.com/A3S-Lab/Cloud/blob/main/docs/architecture-optimization-roadmap.md).
+Per-crate obligations are indexed in
+[cloud-substrate-dependency-roadmap.md](https://github.com/A3S-Lab/a3s/blob/main/docs/cloud-substrate-dependency-roadmap.md).
+
+### Cloud substrate obligations
+
+| Priority | This repository must deliver | Forbidden |
+| --- | --- | --- |
+| `BX0` pairing | Exact-revision Box provider certification for advertised Task/Service capabilities | Inferring unadvertised capabilities |
+| `H0.4-WI*` | Opaque identity-attachment + attestation evidence without parsing product policy | Issuing credentials or owning trust-domain policy |
+| Verticals | Exactly two Unit classes for all Cloud service profiles | Product-specific Unit classes or a Workflow unit |
 
 The roadmap is gate-driven. Code, a mock, or an environment-skipped test does
 not make a capability available.

@@ -91,10 +91,7 @@ impl ManagedRuntimeClient {
     }
 
     fn exec_deadline(&self, request: &RuntimeExecRequest, started_at_ms: u64) -> u64 {
-        let relative = started_at_ms.saturating_add(request.timeout_ms);
-        request
-            .deadline_at_ms
-            .map_or(relative, |absolute| absolute.min(relative))
+        request.effective_deadline_at_ms(started_at_ms)
     }
 
     async fn matching_receipt(

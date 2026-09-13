@@ -187,8 +187,32 @@ pub struct RuntimeExecRequest {
     pub deadline_at_ms: Option<u64>,
 }
 
+/// Wall-clock allowance for capability query, unit lease wait, and post-command
+/// response reconstruction when Exec supplies only a relative `timeout_ms`.
+///
+/// `timeout_ms` remains the guest-command budget passed to the provider. Without
+/// this slack, short command timeouts are eaten by control-plane waits and fail
+/// as `request expired before provider dispatch` before the guest ever starts.
+pub const EXEC_CONTROL_PLANE_BUDGET_MS: u64 = 5_000;
+
 impl RuntimeExecRequest {
     pub const SCHEMA: &'static str = "a3s.runtime.exec-request.v1";
+
+    /// Absolute deadline persisted on first Exec reservation.
+    ///
+    /// - Caller absolute deadline present: smaller of that deadline and
+    ///   `started_at_ms + timeout_ms` (caller owns control-plane budget).
+    /// - Relative timeout only: `started_at_ms + timeout_ms +
+    ///   EXEC_CONTROL_PLANE_BUDGET_MS` so short command timeouts stay reachable
+    ///   after lease/capability waits. Provider still receives `timeout_ms` as
+    ///   the guest kill budget.
+    pub fn effective_deadline_at_ms(&self, started_at_ms: u64) -> u64 {
+        let command_deadline = started_at_ms.saturating_add(self.timeout_ms);
+        match self.deadline_at_ms {
+            Some(absolute) => absolute.min(command_deadline),
+            None => command_deadline.saturating_add(EXEC_CONTROL_PLANE_BUDGET_MS),
+        }
+    }
 
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != Self::SCHEMA {
@@ -216,6 +240,43 @@ impl RuntimeExecRequest {
 
     pub fn digest(&self) -> Result<String, String> {
         canonical_digest(self, self.validate())
+    }
+}
+
+#[cfg(test)]
+mod effective_deadline_tests {
+    use super::*;
+
+    fn sample(timeout_ms: u64, deadline_at_ms: Option<u64>) -> RuntimeExecRequest {
+        RuntimeExecRequest {
+            schema: RuntimeExecRequest::SCHEMA.into(),
+            request_id: "req".into(),
+            unit_id: "unit".into(),
+            generation: 1,
+            command: vec!["/bin/true".into()],
+            timeout_ms,
+            deadline_at_ms,
+        }
+    }
+
+    #[test]
+    fn relative_only_exec_reserves_control_plane_slack() {
+        assert_eq!(
+            sample(150, None).effective_deadline_at_ms(1_000),
+            1_000 + 150 + EXEC_CONTROL_PLANE_BUDGET_MS
+        );
+    }
+
+    #[test]
+    fn absolute_deadline_does_not_gain_control_plane_slack() {
+        assert_eq!(
+            sample(10_000, Some(1_500)).effective_deadline_at_ms(1_000),
+            1_500
+        );
+        assert_eq!(
+            sample(100, Some(5_000)).effective_deadline_at_ms(1_000),
+            1_100
+        );
     }
 }
 

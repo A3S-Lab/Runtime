@@ -214,16 +214,20 @@ already committed response. A pending replay remains subject to its original
 deadline and is never redispatched after that deadline expires.
 
 The request receipt stores the effective absolute deadline captured on first
-reservation. For Exec this is the smaller of the first attempt's relative
-timeout and optional absolute deadline; a retry cannot restart that relative
-timeout window. Before provider dispatch, `ManagedRuntimeClient` replaces the
-driver-bound exec request's optional caller deadline with that persisted
-effective absolute deadline. The driver therefore receives the same non-null
-`deadline_at_ms` on the first dispatch and every pending replay.
+reservation. For Exec with a caller-provided absolute deadline, that value is
+the smaller of the absolute deadline and `started_at_ms + timeout_ms`. For Exec
+with only a relative `timeout_ms`, the persisted deadline is
+`started_at_ms + timeout_ms + EXEC_CONTROL_PLANE_BUDGET_MS` so lease and
+capability waits cannot consume the guest-command budget before dispatch. A
+retry cannot restart that relative timeout window. Before provider dispatch,
+`ManagedRuntimeClient` replaces the driver-bound exec request's optional caller
+deadline with that persisted effective absolute deadline. The driver therefore
+receives the same non-null `deadline_at_ms` on the first dispatch and every
+pending replay; `timeout_ms` remains the guest kill budget.
 
 Drivers may enforce a shorter provider-specific timeout. They must never extend
-the caller deadline. Exec uses the smaller of its relative `timeout_ms` and an
-optional absolute request deadline.
+the caller deadline. When a caller supplies an absolute deadline, Exec uses the
+smaller of its relative `timeout_ms` window and that absolute deadline.
 
 Logs and inspect remain read operations without a request deadline in this
 version; provider adapters must still have a configured transport timeout.

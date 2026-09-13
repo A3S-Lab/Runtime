@@ -20,7 +20,7 @@ pub use process::{RuntimeProcessSpec, SecretReference, SecretTarget};
 pub use protocol::{
     RuntimeActionRequest, RuntimeApplyRequest, RuntimeExecRequest, RuntimeExecResult,
     RuntimeLogChunk, RuntimeLogDiscontinuityReason, RuntimeLogQuery, RuntimeLogStream,
-    RuntimeRemoval,
+    RuntimeRemoval, EXEC_CONTROL_PLANE_BUDGET_MS,
 };
 pub use resource::{IsolationLevel, ResourceLimits};
 pub use unit::{

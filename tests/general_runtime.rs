@@ -6,7 +6,7 @@ use a3s_runtime::contract::{
     RuntimeLogChunk, RuntimeLogQuery, RuntimeLogStream, RuntimeNetworkSpec, RuntimeObservation,
     RuntimeOutputArtifact, RuntimeOutputSpec, RuntimePort, RuntimeProcessSpec, RuntimeRemoval,
     RuntimeServiceEndpoint, RuntimeServiceLifecycle, RuntimeUnitClass, RuntimeUnitSpec,
-    RuntimeUnitState, TransportProtocol,
+    RuntimeUnitState, TransportProtocol, EXEC_CONTROL_PLANE_BUDGET_MS,
 };
 use a3s_runtime::{
     verify_runtime_provider, FileRuntimeStateStore, ManagedRuntimeClient, ProviderId,
@@ -1973,7 +1973,7 @@ async fn lc_exec_003_provider_receives_the_durable_effective_deadline() {
             .as_ref()
             .unwrap()
             .deadline_at_ms,
-        Some(NOW + 1_000)
+        Some(NOW + 1_000 + EXEC_CONTROL_PLANE_BUDGET_MS)
     );
 
     clock.set(NOW + 200);
@@ -1989,7 +1989,7 @@ async fn lc_exec_003_provider_receives_the_durable_effective_deadline() {
             .as_ref()
             .unwrap()
             .deadline_at_ms,
-        Some(NOW + 1_000)
+        Some(NOW + 1_000 + EXEC_CONTROL_PLANE_BUDGET_MS)
     );
 }
 
@@ -2027,10 +2027,13 @@ async fn lc_exec_001_pending_replay_cannot_extend_original_relative_deadline() {
         .await
         .unwrap();
     assert_eq!(pending.state, a3s_runtime::RuntimeRequestState::Pending);
-    assert_eq!(pending.deadline_at_ms, Some(NOW + 10));
+    assert_eq!(
+        pending.deadline_at_ms,
+        Some(NOW + 10 + EXEC_CONTROL_PLANE_BUDGET_MS)
+    );
     assert_eq!(driver.exec_calls.load(Ordering::SeqCst), 1);
 
-    clock.set(NOW + 10);
+    clock.set(NOW + 10 + EXEC_CONTROL_PLANE_BUDGET_MS);
     driver.hang_exec.store(false, Ordering::SeqCst);
     let restarted = ManagedRuntimeClient::with_clock(store.clone(), driver.clone(), clock);
     assert!(matches!(

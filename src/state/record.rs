@@ -89,19 +89,13 @@ impl RuntimeRequestReceipt {
         request: &RuntimeExecRequest,
         started_at_ms: u64,
     ) -> Result<Self, String> {
-        let relative_deadline = started_at_ms.saturating_add(request.timeout_ms);
-        let deadline_at_ms = request
-            .deadline_at_ms
-            .map_or(relative_deadline, |absolute| {
-                absolute.min(relative_deadline)
-            });
         Ok(Self::pending(
             request.request_id.clone(),
             request.unit_id.clone(),
             request.generation,
             RuntimeRequestKind::Exec,
             request.digest()?,
-            Some(deadline_at_ms),
+            Some(request.effective_deadline_at_ms(started_at_ms)),
         ))
     }
 

@@ -50,12 +50,15 @@ pub trait RuntimeDriver: Send + Sync {
     /// Executes one durably identified request within its original budget.
     ///
     /// `ManagedRuntimeClient` always supplies `request.deadline_at_ms` as the
-    /// effective absolute deadline captured by the first reservation: the
-    /// smaller of that attempt's `timeout_ms` window and any caller-provided
-    /// absolute deadline. A pending replay receives the same persisted value,
-    /// so a driver must not restart or extend the execution window. Drivers may
-    /// enforce a shorter provider-specific timeout and must deduplicate or
-    /// reattach the stable request ID after an ambiguous result.
+    /// effective absolute deadline captured by the first reservation (see
+    /// [`RuntimeExecRequest::effective_deadline_at_ms`](crate::contract::RuntimeExecRequest::effective_deadline_at_ms)).
+    /// Relative-only Exec budgets include a control-plane slack so short
+    /// `timeout_ms` values remain guest-command budgets rather than being eaten
+    /// by lease/capability waits. A pending replay receives the same persisted
+    /// value, so a driver must not restart or extend the execution window.
+    /// Drivers may enforce a shorter provider-specific timeout (typically the
+    /// original `timeout_ms`) and must deduplicate or reattach the stable
+    /// request ID after an ambiguous result.
     async fn exec(
         &self,
         unit: &RuntimeUnitRecord,

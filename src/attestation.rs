@@ -24,7 +24,10 @@ pub struct RuntimeAttestationBinding {
     pub provider_build: String,
     pub observed_at_ms: u64,
     pub evidence: RuntimeEvidence,
-    pub provider_attestation: ArtifactRef,
+    /// The generation-bound provider attestation artifact. Hardware
+    /// quotes exist only for confidential isolation; sandbox units carry
+    /// the identity-attachment digest chain without one.
+    pub provider_attestation: Option<ArtifactRef>,
 }
 
 impl RuntimeAttestationBinding {
@@ -58,10 +61,23 @@ impl RuntimeAttestationBinding {
         if evidence.identity_attachment_digest.as_ref() != Some(identity_attachment_digest) {
             return Err("Runtime attestation identity attachment evidence drifted".into());
         }
-        let provider_attestation = observation
-            .provider_attestation
-            .as_ref()
-            .ok_or_else(|| "Runtime observation has no provider attestation".to_string())?;
+        let provider_attestation = match observation.provider_attestation.as_ref() {
+            Some(reference) => {
+                reference.validate().map_err(|error| {
+                    format!("Runtime observation provider attestation is invalid: {error}")
+                })?;
+                Some(reference.clone())
+            }
+            None => {
+                if spec.isolation == IsolationLevel::Confidential {
+                    return Err(
+                        "confidential Runtime observation has no provider attestation"
+                            .to_string(),
+                    );
+                }
+                None
+            }
+        };
         if observation.observed_at_ms == 0 {
             return Err("Runtime attestation observation time must be positive".into());
         }
@@ -99,7 +115,9 @@ impl RuntimeAttestationBinding {
         )?;
         crate::contract::validate_nonempty("provider_build", &self.provider_build, 255)?;
         self.evidence.validate()?;
-        self.provider_attestation.validate()?;
+        if let Some(attestation) = &self.provider_attestation {
+            attestation.validate()?;
+        }
         if self.evidence.provider_build != self.provider_build
             || self.evidence.spec_digest != self.spec_digest
             || self.evidence.identity_attachment_digest.as_ref()
@@ -126,7 +144,7 @@ impl RuntimeAttestationBinding {
             provider_build: &'a str,
             observed_at_ms: u64,
             evidence: &'a RuntimeEvidence,
-            provider_attestation: &'a ArtifactRef,
+            provider_attestation: &'a Option<ArtifactRef>,
         }
         let bytes = serde_json::to_vec(&CanonicalBinding {
             unit_id: &self.unit_id,

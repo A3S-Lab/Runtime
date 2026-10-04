@@ -69,11 +69,13 @@ impl RuntimeConsumerRequirements {
 
     /// Requires one opaque identity attachment in the desired specification
     /// and exact generation-bound provider attestation in the observation.
+    /// Only the digest carry-through feature is unconditional: hardware
+    /// attestation quotes remain a confidential-isolation capability that
+    /// `missing_for` enforces for Confidential specs on its own.
     pub fn require_identity_attestation(mut self) -> Self {
         self.identity_attestation_required = true;
         self.required_features
             .insert(RuntimeFeature::IdentityAttachment);
-        self.required_features.insert(RuntimeFeature::Attestation);
         self
     }
 

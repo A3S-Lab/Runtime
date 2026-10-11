@@ -32,7 +32,8 @@ fn service_spec(protocol: TransportProtocol) -> RuntimeUnitSpec {
         secrets: Vec::new(),
         network: RuntimeNetworkSpec {
             mode: NetworkMode::Service,
-            ports: vec![RuntimePort {
+            egress_allowlist: None,
+                ports: vec![RuntimePort {
                 name: "api".into(),
                 container_port: 8080,
                 protocol,

@@ -388,6 +388,7 @@ mod tests {
             secrets: vec![],
             network: RuntimeNetworkSpec {
                 mode: super::super::NetworkMode::Outbound,
+                egress_allowlist: None,
                 ports: vec![],
             },
             resources: resources(Some(60_000)),
@@ -415,7 +416,8 @@ mod tests {
         spec.restart = RestartPolicy::Always;
         spec.network = RuntimeNetworkSpec {
             mode: super::super::NetworkMode::Service,
-            ports: vec![super::super::RuntimePort {
+            egress_allowlist: None,
+                ports: vec![super::super::RuntimePort {
                 name: "http".into(),
                 container_port: 8080,
                 protocol: super::super::TransportProtocol::Tcp,

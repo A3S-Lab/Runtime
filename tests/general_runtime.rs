@@ -615,7 +615,8 @@ fn task(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
         secrets: vec![],
         network: RuntimeNetworkSpec {
             mode: NetworkMode::Outbound,
-            ports: vec![],
+            egress_allowlist: None,
+                ports: vec![],
         },
         resources: resources(Some(60_000)),
         isolation: IsolationLevel::Container,
@@ -635,7 +636,8 @@ fn service(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
     spec.restart = RestartPolicy::Always;
     spec.network = RuntimeNetworkSpec {
         mode: NetworkMode::Service,
-        ports: vec![RuntimePort {
+        egress_allowlist: None,
+                ports: vec![RuntimePort {
             name: "http".into(),
             container_port: 8080,
             protocol: TransportProtocol::Tcp,

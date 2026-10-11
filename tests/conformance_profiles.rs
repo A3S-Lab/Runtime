@@ -43,7 +43,8 @@ fn spec(unit_id: &str, class: RuntimeUnitClass, args: &[&str]) -> RuntimeUnitSpe
         secrets: Vec::new(),
         network: RuntimeNetworkSpec {
             mode: NetworkMode::None,
-            ports: Vec::new(),
+            egress_allowlist: None,
+                ports: Vec::new(),
         },
         resources: ResourceLimits {
             cpu_millis: 100,

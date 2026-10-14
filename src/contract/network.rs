@@ -192,6 +192,10 @@ fn validate_service_port_name(value: &str) -> Result<(), String> {
 pub struct RuntimeNetworkSpec {
     pub mode: NetworkMode,
     pub ports: Vec<RuntimePort>,
+    /// Egress allowlist for the unit. `None` means no identity policy
+    /// (default posture). `Some` restricts outbound destinations to the
+    /// named entries.
+    pub egress_allowlist: Option<Vec<String>>,
 }
 
 impl RuntimeNetworkSpec {

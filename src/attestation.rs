@@ -71,8 +71,7 @@ impl RuntimeAttestationBinding {
             None => {
                 if spec.isolation == IsolationLevel::Confidential {
                     return Err(
-                        "confidential Runtime observation has no provider attestation"
-                            .to_string(),
+                        "confidential Runtime observation has no provider attestation".to_string(),
                     );
                 }
                 None

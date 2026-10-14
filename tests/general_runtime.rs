@@ -616,6 +616,7 @@ fn task(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
         network: RuntimeNetworkSpec {
             mode: NetworkMode::Outbound,
             ports: vec![],
+            egress_allowlist: None,
         },
         resources: resources(Some(60_000)),
         isolation: IsolationLevel::Container,
@@ -640,6 +641,7 @@ fn service(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
             container_port: 8080,
             protocol: TransportProtocol::Tcp,
         }],
+        egress_allowlist: None,
     };
     spec.health = Some(RuntimeHealthCheck {
         probe: HealthProbe::Http {
@@ -678,6 +680,7 @@ fn service_with_lifecycle(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
 
 fn apply(request_id: &str, spec: RuntimeUnitSpec) -> RuntimeApplyRequest {
     RuntimeApplyRequest {
+        restore_from_snapshot_operation_id: None,
         schema: RuntimeApplyRequest::SCHEMA.into(),
         request_id: request_id.into(),
         deadline_at_ms: Some(NOW + 60_000),

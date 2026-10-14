@@ -51,6 +51,7 @@ fn spec(class: RuntimeUnitClass) -> RuntimeUnitSpec {
         network: RuntimeNetworkSpec {
             mode: NetworkMode::None,
             ports: Vec::new(),
+            egress_allowlist: None,
         },
         resources: ResourceLimits {
             cpu_millis: 100,

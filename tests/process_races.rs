@@ -57,6 +57,7 @@ fn service_spec(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
         network: RuntimeNetworkSpec {
             mode: NetworkMode::None,
             ports: Vec::new(),
+            egress_allowlist: None,
         },
         resources: ResourceLimits {
             cpu_millis: 100,
@@ -77,6 +78,7 @@ fn service_spec(unit_id: &str, generation: u64) -> RuntimeUnitSpec {
 
 fn apply_request(request_id: &str, unit_id: &str, generation: u64) -> RuntimeApplyRequest {
     RuntimeApplyRequest {
+        restore_from_snapshot_operation_id: None,
         schema: RuntimeApplyRequest::SCHEMA.into(),
         request_id: request_id.into(),
         deadline_at_ms: None,

@@ -99,6 +99,7 @@ fn spec() -> RuntimeUnitSpec {
         network: RuntimeNetworkSpec {
             mode: NetworkMode::None,
             ports: Vec::new(),
+            egress_allowlist: None,
         },
         resources: ResourceLimits {
             cpu_millis: 100,
@@ -119,6 +120,7 @@ fn spec() -> RuntimeUnitSpec {
 
 fn apply_request() -> RuntimeApplyRequest {
     RuntimeApplyRequest {
+        restore_from_snapshot_operation_id: None,
         schema: RuntimeApplyRequest::SCHEMA.into(),
         request_id: APPLY_ID.into(),
         deadline_at_ms: Some(NOW + 60_000),

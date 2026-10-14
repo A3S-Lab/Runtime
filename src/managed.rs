@@ -1,7 +1,7 @@
 use crate::contract::{
     RuntimeActionRequest, RuntimeApplyRequest, RuntimeCapabilities, RuntimeExecRequest,
     RuntimeExecResult, RuntimeInspection, RuntimeLogChunk, RuntimeLogQuery, RuntimeObservation,
-    RuntimeRemoval, RuntimeUnitState,
+    RuntimeRemoval, RuntimeSnapshot, RuntimeSnapshotRequest, RuntimeUnitState,
 };
 use crate::{
     RuntimeActionKind, RuntimeClient, RuntimeClock, RuntimeDriver, RuntimeError,
@@ -189,6 +189,15 @@ impl RuntimeClient for ManagedRuntimeClient {
             .map_err(RuntimeError::InvalidRequest)?;
         if !missing.is_empty() {
             return Err(RuntimeError::UnsupportedCapabilities(missing));
+        }
+        // ED3 (design A): an apply that seeds from a predecessor's
+        // snapshot rides the same feature as the capture.
+        if request.restore_from_snapshot_operation_id.is_some()
+            && !capabilities.supports_feature(crate::contract::RuntimeFeature::StateSnapshot)
+        {
+            return Err(RuntimeError::UnsupportedCapabilities(vec![
+                "feature:StateSnapshot".into(),
+            ]));
         }
 
         let _lease = self
@@ -452,6 +461,63 @@ impl RuntimeClient for ManagedRuntimeClient {
         }
         self.state.complete_removal(&removal).await?;
         Ok(removal)
+    }
+
+    /// ED3: capture the unit's state to a keyed snapshot before
+    /// termination. Idempotency is the driver's at-most-once key (the
+    /// operation id): a retry re-captures nothing and returns the same
+    /// receipt. The removal that follows carries the attestation in its
+    /// journaled acknowledgement, so this v1 path needs no separate
+    /// durable receipt of its own.
+    async fn snapshot(&self, request: &RuntimeSnapshotRequest) -> RuntimeResult<RuntimeSnapshot> {
+        request.validate().map_err(RuntimeError::InvalidRequest)?;
+        self.check_deadline(request.deadline_at_ms)?;
+        let capabilities = self
+            .bounded(
+                request.deadline_at_ms,
+                "capability query",
+                self.checked_capabilities(),
+            )
+            .await?;
+        if !capabilities.supports_feature(crate::contract::RuntimeFeature::StateSnapshot) {
+            return Err(RuntimeError::UnsupportedCapabilities(vec![
+                "feature:StateSnapshot".into(),
+            ]));
+        }
+        let _lease = self
+            .bounded(
+                request.deadline_at_ms,
+                "operation lease wait",
+                self.state.acquire_operation_lease(&request.unit_id),
+            )
+            .await?;
+        self.check_deadline(request.deadline_at_ms)?;
+        let record = self.state.load(&request.unit_id).await?;
+        if record.spec.generation != request.generation {
+            return Err(RuntimeError::StaleGeneration {
+                unit_id: request.unit_id.clone(),
+                requested: request.generation,
+                current: record.spec.generation,
+            });
+        }
+        let snapshot = self
+            .bounded(
+                request.deadline_at_ms,
+                "provider snapshot",
+                self.driver.snapshot(&record, request),
+            )
+            .await?;
+        snapshot.validate().map_err(RuntimeError::Protocol)?;
+        if snapshot.operation_id != request.operation_id
+            || snapshot.unit_id != request.unit_id
+            || snapshot.generation != request.generation
+            || snapshot.include_memory != request.include_memory
+        {
+            return Err(RuntimeError::Protocol(
+                "provider snapshot receipt does not answer its request".into(),
+            ));
+        }
+        Ok(snapshot)
     }
 
     async fn logs(&self, query: &RuntimeLogQuery) -> RuntimeResult<Vec<RuntimeLogChunk>> {

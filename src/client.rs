@@ -1,9 +1,9 @@
 use crate::contract::{
     RuntimeActionRequest, RuntimeApplyRequest, RuntimeCapabilities, RuntimeExecRequest,
     RuntimeExecResult, RuntimeInspection, RuntimeLogChunk, RuntimeLogQuery, RuntimeObservation,
-    RuntimeRemoval,
+    RuntimeRemoval, RuntimeSnapshot, RuntimeSnapshotRequest,
 };
-use crate::RuntimeResult;
+use crate::{RuntimeError, RuntimeResult};
 use async_trait::async_trait;
 
 /// Stable provider-neutral lifecycle implemented by every A3S Runtime.
@@ -18,6 +18,18 @@ pub trait RuntimeClient: Send + Sync {
     async fn stop(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeInspection>;
 
     async fn remove(&self, request: &RuntimeActionRequest) -> RuntimeResult<RuntimeRemoval>;
+
+    /// ED3: capture the unit's state to a keyed snapshot before
+    /// termination. The default refuses — clients over drivers that
+    /// do not advertise
+    /// [`RuntimeFeature::StateSnapshot`](crate::contract::RuntimeFeature::StateSnapshot)
+    /// never see a planned drain.
+    async fn snapshot(&self, request: &RuntimeSnapshotRequest) -> RuntimeResult<RuntimeSnapshot> {
+        let _ = request;
+        Err(RuntimeError::UnsupportedCapabilities(vec![
+            "feature:StateSnapshot".into(),
+        ]))
+    }
 
     async fn logs(&self, query: &RuntimeLogQuery) -> RuntimeResult<Vec<RuntimeLogChunk>>;
 

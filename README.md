@@ -175,12 +175,15 @@ Choose the entry point that matches your role:
   equivalent fenced per-unit lease.
 
 > [!NOTE]
-> `a3s-runtime` 0.6.0 uses capabilities v6 and unit-spec/observation v4. It
+> `a3s-runtime` 0.7.0 uses capabilities v6 and unit-spec/observation v4. It
 > separates Service readiness from liveness, carries a bounded graceful-stop
 > policy, retains typed endpoints plus opaque identity-attestation binding,
-> and adds the `StateSnapshot` runtime feature — the provider can capture a
+> adds the `StateSnapshot` runtime feature — the provider can capture a
 > unit's state to a keyed snapshot before termination and attest the
-> operation (the capability a state-handoff drain requires).
+> operation (the capability a state-handoff drain requires) — and carries
+> the keyed snapshot surfaces end to end: the driver `snapshot` operation,
+> the restore reference on apply requests (gated on the same feature), and
+> the network egress allowlist on unit specs.
 > Production claims still require exact A3S Box certification.
 
 ## Runtime specification

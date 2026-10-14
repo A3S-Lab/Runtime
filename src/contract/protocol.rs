@@ -9,6 +9,11 @@ pub struct RuntimeApplyRequest {
     pub request_id: String,
     pub deadline_at_ms: Option<u64>,
     pub spec: RuntimeUnitSpec,
+    /// ED3: restore the unit's state from the keyed snapshot captured
+    /// by the predecessor's drain (design A: the successor seeds from
+    /// the snapshot). Absent on engines without handoff support.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_from_snapshot_operation_id: Option<String>,
 }
 
 impl RuntimeApplyRequest {
@@ -24,6 +29,9 @@ impl RuntimeApplyRequest {
         super::validate_id("request_id", &self.request_id, 512)?;
         if self.deadline_at_ms == Some(0) {
             return Err("deadline_at_ms must be positive when present".into());
+        }
+        if let Some(operation) = &self.restore_from_snapshot_operation_id {
+            super::validate_id("restore_from_snapshot_operation_id", operation, 256)?;
         }
         self.spec.validate()
     }
@@ -91,6 +99,73 @@ impl RuntimeRemoval {
         super::validate_id("unit_id", &self.unit_id, 512)?;
         if self.generation == 0 {
             return Err("removal generation must be positive".into());
+        }
+        Ok(())
+    }
+}
+
+/// ED3: a keyed state-snapshot capture requested before termination.
+/// The operation id is the caller's at-most-once key (the drain
+/// plan's snapshot operation); a driver replay of the same id must
+/// return the same receipt without recapturing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeSnapshotRequest {
+    pub schema: String,
+    pub operation_id: String,
+    pub unit_id: String,
+    pub generation: u64,
+    pub include_memory: bool,
+    pub deadline_at_ms: Option<u64>,
+}
+
+impl RuntimeSnapshotRequest {
+    pub const SCHEMA: &'static str = "a3s.runtime.snapshot-request.v1";
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime snapshot-request schema {:?}",
+                self.schema
+            ));
+        }
+        super::validate_id("operation_id", &self.operation_id, 256)?;
+        super::validate_id("unit_id", &self.unit_id, 512)?;
+        if self.generation == 0 || self.deadline_at_ms == Some(0) {
+            return Err("snapshot generation and deadline must be positive".into());
+        }
+        Ok(())
+    }
+}
+
+/// ED3: the receipt for a captured snapshot. The control plane records
+/// the operation id as the drain's capture evidence when the removal
+/// acknowledgement attests it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeSnapshot {
+    pub schema: String,
+    pub operation_id: String,
+    pub unit_id: String,
+    pub generation: u64,
+    pub include_memory: bool,
+    pub captured_at_ms: u64,
+}
+
+impl RuntimeSnapshot {
+    pub const SCHEMA: &'static str = "a3s.runtime.snapshot.v1";
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err(format!(
+                "unsupported Runtime snapshot schema {:?}",
+                self.schema
+            ));
+        }
+        super::validate_id("operation_id", &self.operation_id, 256)?;
+        super::validate_id("unit_id", &self.unit_id, 512)?;
+        if self.generation == 0 {
+            return Err("snapshot generation must be positive".into());
         }
         Ok(())
     }

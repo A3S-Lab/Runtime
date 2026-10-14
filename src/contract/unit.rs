@@ -389,6 +389,7 @@ mod tests {
             network: RuntimeNetworkSpec {
                 mode: super::super::NetworkMode::Outbound,
                 ports: vec![],
+                egress_allowlist: None,
             },
             resources: resources(Some(60_000)),
             isolation: IsolationLevel::Container,
@@ -420,6 +421,7 @@ mod tests {
                 container_port: 8080,
                 protocol: super::super::TransportProtocol::Tcp,
             }],
+            egress_allowlist: None,
         };
         spec.health = Some(RuntimeHealthCheck {
             probe: HealthProbe::Http {

@@ -37,6 +37,7 @@ fn service_spec(protocol: TransportProtocol) -> RuntimeUnitSpec {
                 container_port: 8080,
                 protocol,
             }],
+            egress_allowlist: None,
         },
         resources: ResourceLimits {
             cpu_millis: 500,

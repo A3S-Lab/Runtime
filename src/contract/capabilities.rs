@@ -31,6 +31,10 @@ pub enum RuntimeFeature {
     SecretReferences,
     OutputArtifacts,
     ServiceLifecycle,
+    /// ED3: the provider can capture a unit's state to a keyed
+    /// snapshot before termination and attest the operation — the
+    /// capability a state-handoff drain requires.
+    StateSnapshot,
 }
 
 /// Structured, provider-reported capabilities. Product-specific support

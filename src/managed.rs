@@ -224,7 +224,7 @@ impl RuntimeClient for ManagedRuntimeClient {
                 request.deadline_at_ms,
                 "provider apply",
                 self.driver
-                    .apply(&request.spec, &reservation.record.observation),
+                    .apply(request, &reservation.record.observation),
             )
             .await?;
         observation

@@ -23,7 +23,7 @@ pub trait RuntimeDriver: Send + Sync {
 
     async fn apply(
         &self,
-        spec: &RuntimeUnitSpec,
+        request: &RuntimeApplyRequest,
         current: &RuntimeObservation,
     ) -> RuntimeResult<RuntimeObservation>;
 
@@ -105,7 +105,7 @@ mod snapshot_tests {
 
         async fn apply(
             &self,
-            _spec: &RuntimeUnitSpec,
+            _request: &RuntimeApplyRequest,
             _current: &RuntimeObservation,
         ) -> RuntimeResult<RuntimeObservation> {
             unimplemented!("apply is not under test")

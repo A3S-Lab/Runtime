@@ -163,18 +163,18 @@ impl RuntimeDriver for GenerationDriver {
     }
 
     async fn apply(
-        &self,
-        spec: &RuntimeUnitSpec,
+            &self,
+            request: &a3s_runtime::contract::RuntimeApplyRequest,
         current: &RuntimeObservation,
     ) -> RuntimeResult<RuntimeObservation> {
         self.apply_calls.fetch_add(1, Ordering::SeqCst);
         let resource_id = {
             let mut inventory = self.resources.lock().unwrap();
             inventory
-                .entry(spec.unit_id.clone())
+                .entry(request.spec.unit_id.clone())
                 .or_default()
-                .entry(spec.generation)
-                .or_insert_with(|| format!("provider/{}/g{}", spec.unit_id, spec.generation))
+                .entry(request.spec.generation)
+                .or_insert_with(|| format!("provider/{}/g{}", request.spec.unit_id, request.spec.generation))
                 .clone()
         };
         if self.fail_after_create.swap(false, Ordering::SeqCst) {
@@ -185,27 +185,27 @@ impl RuntimeDriver for GenerationDriver {
         self.resources
             .lock()
             .unwrap()
-            .entry(spec.unit_id.clone())
+            .entry(request.spec.unit_id.clone())
             .or_default()
-            .retain(|generation, _| *generation == spec.generation);
+            .retain(|generation, _| *generation == request.spec.generation);
 
         let mut observation = current.clone();
-        observation.state = match spec.class {
+        observation.state = match request.spec.class {
             RuntimeUnitClass::Task => RuntimeUnitState::Succeeded,
             RuntimeUnitClass::Service => RuntimeUnitState::Running,
         };
         observation.provider_resource_id = Some(resource_id);
         observation.provider_build = Some("generation-driver/1".into());
-        observation.observed_at_ms = NOW + spec.generation;
+        observation.observed_at_ms = NOW + request.spec.generation;
         observation.started_at_ms = Some(NOW);
         observation.finished_at_ms =
-            (spec.class == RuntimeUnitClass::Task).then_some(observation.observed_at_ms);
-        observation.health = spec.health.as_ref().map(|_| RuntimeHealthObservation {
+            (request.spec.class == RuntimeUnitClass::Task).then_some(observation.observed_at_ms);
+        observation.health = request.spec.health.as_ref().map(|_| RuntimeHealthObservation {
             state: RuntimeHealthState::Healthy,
             checked_at_ms: observation.observed_at_ms,
             message: None,
         });
-        observation.liveness = spec
+        observation.liveness = request.spec
             .service_lifecycle
             .as_ref()
             .map(|_| RuntimeHealthObservation {
@@ -213,9 +213,9 @@ impl RuntimeDriver for GenerationDriver {
                 checked_at_ms: observation.observed_at_ms,
                 message: None,
             });
-        publish_test_endpoints(spec, &mut observation, "generation-driver/1")?;
+        publish_test_endpoints(&request.spec, &mut observation, "generation-driver/1")?;
         observation
-            .validate_against(spec)
+            .validate_against(&request.spec)
             .map_err(RuntimeError::Protocol)?;
         Ok(observation)
     }
@@ -350,8 +350,8 @@ impl RuntimeDriver for TestDriver {
     }
 
     async fn apply(
-        &self,
-        spec: &RuntimeUnitSpec,
+            &self,
+            request: &a3s_runtime::contract::RuntimeApplyRequest,
         current: &RuntimeObservation,
     ) -> RuntimeResult<RuntimeObservation> {
         self.apply_calls.fetch_add(1, Ordering::SeqCst);
@@ -367,7 +367,7 @@ impl RuntimeDriver for TestDriver {
         } else if self.return_starting_on_apply.load(Ordering::SeqCst) {
             RuntimeUnitState::Starting
         } else {
-            match spec.class {
+            match request.spec.class {
                 RuntimeUnitClass::Task => RuntimeUnitState::Succeeded,
                 RuntimeUnitClass::Service => RuntimeUnitState::Running,
             }
@@ -379,9 +379,9 @@ impl RuntimeDriver for TestDriver {
             || !self.return_unknown_on_apply.load(Ordering::SeqCst)
         {
             let provider_identity = if current.state == RuntimeUnitState::Unknown {
-                format!("provider/recovered/{}", spec.unit_id)
+                format!("provider/recovered/{}", request.spec.unit_id)
             } else {
-                format!("provider/{}", spec.unit_id)
+                format!("provider/{}", request.spec.unit_id)
             };
             observation.provider_resource_id = Some(provider_identity);
             observation.provider_build = Some("test-driver/1".into());
@@ -391,7 +391,7 @@ impl RuntimeDriver for TestDriver {
         observation.finished_at_ms = observation.state.is_terminal().then_some(NOW + 1);
         observation.health = (observation.state == RuntimeUnitState::Running)
             .then(|| {
-                spec.health.as_ref().map(|_| RuntimeHealthObservation {
+                request.spec.health.as_ref().map(|_| RuntimeHealthObservation {
                     state: RuntimeHealthState::Healthy,
                     checked_at_ms: NOW + 1,
                     message: None,
@@ -400,7 +400,7 @@ impl RuntimeDriver for TestDriver {
             .flatten();
         observation.liveness = (observation.state == RuntimeUnitState::Running)
             .then(|| {
-                spec.service_lifecycle
+                request.spec.service_lifecycle
                     .as_ref()
                     .map(|_| RuntimeHealthObservation {
                         state: RuntimeHealthState::Healthy,
@@ -409,9 +409,9 @@ impl RuntimeDriver for TestDriver {
                     })
             })
             .flatten();
-        publish_test_endpoints(spec, &mut observation, "test-driver/1")?;
+        publish_test_endpoints(&request.spec, &mut observation, "test-driver/1")?;
         observation.outputs = if observation.state == RuntimeUnitState::Succeeded {
-            spec.outputs
+            request.spec.outputs
                 .iter()
                 .map(|expected| RuntimeOutputArtifact {
                     name: expected.name.clone(),
@@ -426,7 +426,7 @@ impl RuntimeDriver for TestDriver {
             Vec::new()
         };
         observation.provider_attestation =
-            (spec.isolation == IsolationLevel::Confidential).then(|| artifact('c'));
+            (request.spec.isolation == IsolationLevel::Confidential).then(|| artifact('c'));
         Ok(observation)
     }
 

@@ -240,28 +240,28 @@ impl RuntimeDriver for DeterministicFaultDriver {
     }
 
     async fn apply(
-        &self,
-        spec: &RuntimeUnitSpec,
+            &self,
+            request: &a3s_runtime::contract::RuntimeApplyRequest,
         current: &RuntimeObservation,
     ) -> RuntimeResult<RuntimeObservation> {
         self.boundary(FaultOperation::Apply, FaultBoundary::BeforeEffect)
             .await?;
         let (observation, created) = {
             let mut resources = self.resources.lock().expect("provider resource lock");
-            let generations = resources.entry(spec.unit_id.clone()).or_default();
+            let generations = resources.entry(request.spec.unit_id.clone()).or_default();
             let mut created = false;
-            let observation = if let Some(resource) = generations.get(&spec.generation) {
+            let observation = if let Some(resource) = generations.get(&request.spec.generation) {
                 resource.observation.clone()
             } else {
                 created = true;
                 self.provider_observation(
-                    spec,
+                    &request.spec,
                     current,
-                    format!("provider/{}/g{}", spec.unit_id, spec.generation),
+                    format!("provider/{}/g{}", request.spec.unit_id, request.spec.generation),
                 )
             };
             generations.insert(
-                spec.generation,
+                request.spec.generation,
                 ProviderResource {
                     observation: observation.clone(),
                 },
@@ -269,7 +269,7 @@ impl RuntimeDriver for DeterministicFaultDriver {
             let stale = generations
                 .keys()
                 .copied()
-                .filter(|generation| *generation != spec.generation)
+                .filter(|generation| *generation != request.spec.generation)
                 .collect::<BTreeSet<_>>();
             for generation in stale {
                 generations.remove(&generation);

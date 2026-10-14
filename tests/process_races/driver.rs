@@ -254,12 +254,12 @@ impl RuntimeDriver for ProcessRaceDriver {
     }
 
     async fn apply(
-        &self,
-        spec: &RuntimeUnitSpec,
+            &self,
+            request: &a3s_runtime::contract::RuntimeApplyRequest,
         current: &RuntimeObservation,
     ) -> RuntimeResult<RuntimeObservation> {
         let driver = self.clone();
-        let spec = spec.clone();
+        let spec = request.spec.clone();
         let current = current.clone();
         tokio::task::spawn_blocking(move || driver.apply_sync(&spec, &current))
             .await
